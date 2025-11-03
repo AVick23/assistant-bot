@@ -15,13 +15,12 @@ load_dotenv()
 
 # Легковесные зависимости для обработки русского языка
 import pymorphy2
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-warnings.filterwarnings('ignore', category=UserWarning, module='transformers')
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 # Константы
 ADMIN_USER_ID = 1373472999
@@ -29,15 +28,6 @@ CONSULTATIONS_FILE = "consultations.json"
 
 # Инициализация морфологического анализатора для русского языка
 morph = pymorphy2.MorphAnalyzer()
-
-# Загрузка легковесной модели для семантического поиска
-try:
-    # Модель с хорошей поддержкой русского языка
-    model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', device='cpu')
-    SEMANTIC_SEARCH_AVAILABLE = True
-except Exception as e:
-    print(f"Предупреждение: Не удалось загрузить семантическую модель. Будет использоваться только поиск по ключевым словам. Ошибка: {str(e)}")
-    SEMANTIC_SEARCH_AVAILABLE = False
 
 # Расширенный список стоп-слов для русского языка
 RUSSIAN_STOPWORDS = {
@@ -82,8 +72,34 @@ SYNONYMS = {
     'легкий': ['простой', 'нетрудный'],
     'быстро': ['скорость', 'оперативно', 'в срок'],
     'долго': ['медленно', 'затянуто'],
-    'качество': ['уровень', 'стандарт']
+    'качество': ['уровень', 'стандарт'],
+    'консультация': ['встреча', 'совет', 'помощь'],
+    'доступ': ['получение', 'возможность'],
+    'материалы': ['уроки', 'лекции', 'ресурсы'],
+    'поддержка': ['помощь', 'сопровождение']
 }
+
+def preprocess_question(question: str) -> str:
+    """Удаляет вводные конструкции из вопроса"""
+    patterns = [
+        r'^а если\s+',
+        r'^что если\s+',
+        r'^что будет если\s+',
+        r'^можно ли\s+',
+        r'^а что если\s+',
+        r'^если я\s+',
+        r'^а\s+',
+        r'^ну\s+',
+        r'^скажи\s+',
+        r'^расскажи\s+',
+        r'^объясни\s+'
+    ]
+    
+    cleaned = question.lower()
+    for pattern in patterns:
+        cleaned = re.sub(pattern, '', cleaned)
+    
+    return cleaned.strip()
 
 def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
     """Расширение набора ключевых слов синонимами"""
@@ -127,6 +143,8 @@ def lemmatize_word(word: str) -> str:
 
 def lemmatize_sentence(text: str) -> str:
     """Лемматизация всего предложения"""
+    # Удаляем знаки вопроса и другие лишние символы
+    text = re.sub(r'[?!.]', '', text)
     words = preprocess_text(text).split()
     lemmas = [lemmatize_word(word) for word in words if not is_stop_word(word) and len(word) > 2]
     return " ".join(lemmas)
@@ -199,56 +217,40 @@ class KBIndex:
     """Класс для индексации и поиска по базе знаний"""
     def __init__(self):
         self.items = []
-        self.all_embeddings = None
         self.contexts = []
         self.tfidf_vectorizer = None
-        self.tfidf_matrix = None
+        self.tfidf_labeled_matrix = None
+        self.raw_tfidf_vectorizer = None
+        self.tfidf_raw_matrix = None
         self.last_update = 0
     
     def build_tfidf_index(self, contexts: List[str]):
         """Построение TF-IDF индекса для полнотекстового поиска"""
+        # Для лемматизированных текстов
         self.tfidf_vectorizer = TfidfVectorizer(
             lowercase=True,
             stop_words=list(RUSSIAN_STOPWORDS),
             ngram_range=(1, 3),
-            max_features=5000
+            max_features=3000  # Уменьшено для экономии памяти
         )
-        self.tfidf_matrix = self.tfidf_vectorizer.fit_transform([lemmatize_sentence(ctx) for ctx in contexts])
-    
-    def update_embeddings(self, embeddings: np.ndarray, contexts: List[str]):
-        """Обновление эмбеддингов для семантического поиска"""
-        self.all_embeddings = embeddings
-        self.contexts = contexts
-    
-    def semantic_search(self, query: str, top_k: int = 3) -> List[dict]:
-        """Семантический поиск по эмбеддингам"""
-        if self.all_embeddings is None or not SEMANTIC_SEARCH_AVAILABLE:
-            return []
         
-        # Получаем эмбеддинг запроса
-        query_embedding = model.encode([query])[0].reshape(1, -1)
+        lemmatized_contexts = [lemmatize_sentence(ctx) for ctx in contexts]
+        self.tfidf_labeled_matrix = self.tfidf_vectorizer.fit_transform(lemmatized_contexts)
         
-        # Вычисляем косинусное сходство
-        similarities = cosine_similarity(query_embedding, self.all_embeddings)[0]
-        
-        # Получаем топ-K наиболее релевантных результатов
-        top_indices = np.argsort(similarities)[::-1][:top_k]
-        results = []
-        
-        for idx in top_indices:
-            score = similarities[idx]
-            if score > 0.3:  # Порог релевантности
-                results.append({
-                    "context": self.contexts[idx],
-                    "score": float(score),
-                    "index": int(idx)
-                })
-        
-        return results
+        # Для необработанных текстов (для дополнительного поиска)
+        self.raw_tfidf_vectorizer = TfidfVectorizer(
+            lowercase=True,
+            stop_words=list(RUSSIAN_STOPWORDS),
+            ngram_range=(1, 2),
+            max_features=2000
+        )
+        self.tfidf_raw_matrix = self.raw_tfidf_vectorizer.fit_transform(contexts)
     
     def keyword_search(self, user_question: str, top_k: int = 3) -> List[dict]:
         """Поиск по ключевым словам с ранжированием"""
         user_keywords = extract_keywords(user_question)
+        print(f"🔑 Извлеченные ключевые слова из '{user_question}': {user_keywords}")
+        
         if not user_keywords:
             return []
         
@@ -274,28 +276,38 @@ class KBIndex:
     
     def fulltext_search(self, query: str, top_k: int = 3) -> List[dict]:
         """Полнотекстовый поиск с использованием TF-IDF"""
-        if self.tfidf_vectorizer is None or self.tfidf_matrix is None:
+        if self.tfidf_vectorizer is None or self.tfidf_labeled_matrix is None:
             return []
         
-        # Лемматизируем запрос
-        query_lemma = lemmatize_sentence(query)
-        query_vec = self.tfidf_vectorizer.transform([query_lemma])
-        
-        # Вычисляем косинусное сходство
-        similarities = cosine_similarity(query_vec, self.tfidf_matrix)[0]
-        
-        # Получаем топ-K результатов
-        top_indices = np.argsort(similarities)[::-1][:top_k]
         results = []
         
-        for idx in top_indices:
-            score = similarities[idx]
-            if score > 0.1:  # Порог для TF-IDF
-                results.append({
-                    "context": self.contexts[idx],
-                    "score": float(score),
-                    "index": int(idx)
-                })
+        try:
+            # Поиск по лемматизированному тексту
+            query_lemma = lemmatize_sentence(query)
+            query_vec = self.tfidf_vectorizer.transform([query_lemma])
+            labeled_similarities = cosine_similarity(query_vec, self.tfidf_labeled_matrix)[0]
+            
+            # Поиск по необработанному тексту
+            raw_query_vec = self.raw_tfidf_vectorizer.transform([query])
+            raw_similarities = cosine_similarity(raw_query_vec, self.tfidf_raw_matrix)[0]
+            
+            # Комбинируем результаты
+            combined_similarities = 0.7 * labeled_similarities + 0.3 * raw_similarities
+            
+            # Получаем топ-K результатов
+            top_indices = np.argsort(combined_similarities)[::-1][:top_k]
+            
+            for idx in top_indices:
+                score = combined_similarities[idx]
+                if score > 0.15:  # Порог для TF-IDF
+                    results.append({
+                        "context": self.contexts[idx],
+                        "score": float(score),
+                        "index": int(idx)
+                    })
+        except Exception as e:
+            print(f"Ошибка при полнотекстовом поиске: {str(e)}")
+            # Возвращаем пустой результат в случае ошибки
         
         return results
 
@@ -329,69 +341,70 @@ def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
     # Построение TF-IDF индекса
     kb_index.build_tfidf_index(contexts)
     
-    # Если доступен семантический поиск, вычисляем эмбеддинги
-    if SEMANTIC_SEARCH_AVAILABLE:
-        embeddings = []
-        batch_size = 8  # Размер батча для экономии памяти
-        
-        print("Вычисление эмбеддингов для контекстов...")
-        for i in range(0, len(contexts), batch_size):
-            batch = contexts[i:i+batch_size]
-            batch_embeddings = model.encode(batch, show_progress_bar=False)
-            embeddings.extend(batch_embeddings)
-        
-        kb_index.update_embeddings(np.array(embeddings), contexts)
-    
     kb_index.last_update = time.time()
     return kb_index
 
 def find_best_match(user_question: str, kb_index: KBIndex) -> str:
     """Улучшенный гибридный поиск лучшего совпадения в базе знаний"""
+    # Предобработка вопроса для удаления вводных конструкций
+    cleaned_question = preprocess_question(user_question)
+    print(f"Оригинальный вопрос: '{user_question}'")
+    print(f"Очищенный вопрос: '{cleaned_question}'")
+    
     # Извлекаем сущности из вопроса
     entities = extract_entities(user_question)
     
-    # Поиск по ключевым словам
-    keyword_results = kb_index.keyword_search(user_question, top_k=3)
+    # Поиск по ключевым словам для очищенного вопроса
+    keyword_results = kb_index.keyword_search(cleaned_question, top_k=5)
     
-    # Поиск по полному тексту
-    fulltext_results = kb_index.fulltext_search(user_question, top_k=3)
+    # Поиск по полному тексту для очищенного вопроса
+    fulltext_results = kb_index.fulltext_search(cleaned_question, top_k=5)
     
-    # Семантический поиск
-    semantic_results = kb_index.semantic_search(user_question, top_k=3)
+    # Если нет результатов для очищенного вопроса - пробуем исходный вопрос
+    if not keyword_results and not fulltext_results:
+        print("Нет результатов для очищенного вопроса, пробуем исходный вопрос")
+        keyword_results = kb_index.keyword_search(user_question, top_k=5)
+        fulltext_results = kb_index.fulltext_search(user_question, top_k=5)
     
     # Объединяем результаты с весами
     combined_results = {}
     
-    # Добавляем результаты по ключевым словам (вес 0.5)
+    # Добавляем результаты по ключевым словам (вес 0.6)
     for res in keyword_results:
         idx = res["index"]
         combined_results.setdefault(idx, 0)
-        combined_results[idx] += res["score"] * 0.5
+        combined_results[idx] += res["score"] * 0.6
     
-    # Добавляем результаты полнотекстового поиска (вес 0.3)
+    # Добавляем результаты полнотекстового поиска (вес 0.4)
     for res in fulltext_results:
         idx = res["index"]
         combined_results.setdefault(idx, 0)
-        combined_results[idx] += res["score"] * 50 * 0.3  # Нормализуем оценку TF-IDF
-    
-    # Добавляем результаты семантического поиска (вес 0.7)
-    for res in semantic_results:
-        idx = res["index"]
-        combined_results.setdefault(idx, 0)
-        combined_results[idx] += res["score"] * 10 * 0.7  # Нормализуем оценку
+        combined_results[idx] += res["score"] * 50 * 0.4
     
     # Сортируем по общей оценке
     if combined_results:
-        best_idx = max(combined_results.items(), key=lambda x: x[1])[0]
-        best_score = combined_results[best_idx]
+        sorted_results = sorted(combined_results.items(), key=lambda x: x[1], reverse=True)
+        best_idx, best_score = sorted_results[0]
         
-        # Если оценка высокая, возвращаем лучший результат
-        if best_score > 5.0:
+        # Понижаем порог для принятия ответа
+        if best_score > 1.5:  # Было 3.0
+            print(f"Найден ответ с оценкой {best_score} для вопроса '{cleaned_question}'")
             return kb_index.items[best_idx]["context"]
     
-    # Если ничего хорошего не найдено, используем лучший результат из семантического поиска
-    if semantic_results and semantic_results[0]["score"] > 0.5:
-        return semantic_results[0]["context"]
+    # Если ничего хорошего не найдено, используем лучший результат из полнотекстового поиска
+    if fulltext_results:
+        best_fulltext = fulltext_results[0]
+        if best_fulltext["score"] > 0.2:  # Было 0.3
+            print(f"Используем полнотекстовый результат с оценкой {best_fulltext['score']}")
+            return best_fulltext["context"]
+    
+    # Если ничего не найдено - пробуем поиск по отдельным ключевым словам
+    fallback_keywords = extract_keywords(cleaned_question, use_synonyms=False)
+    if fallback_keywords:
+        print(f"Попытка поиска по ключевым словам: {fallback_keywords}")
+        fallback_results = kb_index.keyword_search(" ".join(fallback_keywords), top_k=3)
+        if fallback_results and fallback_results[0]["score"] > 0:
+            return fallback_results[0]["context"]
     
     # Если ничего не найдено
     return "К сожалению, я не нашел ответа на ваш вопрос в своей базе знаний. Попробуйте задать вопрос другими словами или уточнить детали."
@@ -405,7 +418,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     welcome_message = (
         "Привет! Я ваш учебный помощник. "
         "Задайте любой вопрос по курсу, и я постараюсь найти ответ.\n\n"
-        f"Семантический поиск: {'✅ Доступен' if SEMANTIC_SEARCH_AVAILABLE else '❌ Недоступен (только поиск по ключевым словам)'}"
+        "ℹ️ Используется улучшенный поиск по ключевым словам и текстовому анализу."
     )
     await update.message.reply_text(welcome_message)
 
