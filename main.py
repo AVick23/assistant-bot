@@ -25,6 +25,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 # Константы
 ADMIN_USER_ID = 1373472999
 CONSULTATIONS_FILE = "consultations.json"
+CALENDAR_URL = "https://calendar.app.google/ThpteAc5uqhxqnUA9"
 
 # Инициализация морфологического анализатора для русского языка
 morph = pymorphy2.MorphAnalyzer()
@@ -455,8 +456,23 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     with open(CONSULTATIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(consultations, f, ensure_ascii=False, indent=4)
     
-    # Отправляем подтверждение пользователю
-    await query.edit_message_text(text="✅ Вы успешно записались на бесплатную консультацию! С вами скоро свяжутся.")
+    # Создаем кнопки с ссылкой на календарь
+    keyboard = [
+        [InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)],
+        [InlineKeyboardButton("📱 Написать в Telegram", url="https://t.me/AVick23")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Отправляем подтверждение с дополнительными вариантами связи
+    await query.edit_message_text(
+        text="✅ Ваша заявка успешно сохранена!\n\n"
+             "Вы можете:\n"
+             "1. 🔗 <b>Выбрать удобное время сами</b> через Google Календарь\n"
+             "2. 📱 <b>Написать мне напрямую</b> в Telegram для согласования времени\n\n"
+             "Я также свяжусь с вами в ближайшее время для подтверждения деталей.",
+        reply_markup=reply_markup,
+        parse_mode="HTML"
+    )
 
 async def clear_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик нажатия кнопки очистки списка заявок"""
@@ -538,9 +554,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Проверяем, нужно ли добавить кнопку для консультации
     if "[add_button]" in answer:
-        keyboard = [[InlineKeyboardButton("Записаться на бесплатную консультацию", callback_data="consultation")]]
+        keyboard = [
+            [InlineKeyboardButton("📅 Записаться через Google Календарь", url=CALENDAR_URL)],
+            [InlineKeyboardButton("📝 Оставить заявку для обратной связи", callback_data="consultation")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(clean_answer, reply_markup=reply_markup)
+        await update.message.reply_text(
+            clean_answer + "\n\n💡 Вы можете выбрать удобное время сами через календарь или оставить заявку и я свяжусь с вами для согласования времени.",
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
     else:
         await update.message.reply_text(clean_answer)
 
