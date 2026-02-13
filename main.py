@@ -19,13 +19,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# Импорт для нечеткого поиска (установите: pip install thefuzz)
+# Импорт для нечеткого поиска
 try:
     from thefuzz import process
     FUZZY_ENABLED = True
 except ImportError:
     FUZZY_ENABLED = False
-    print("⚠️ Библиотека thefuzz не установлена. pip install thefuzz")
+    print("⚠️ pip install thefuzz")
 
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
@@ -41,29 +41,12 @@ ITEMS_PER_PAGE = 5
 
 morph = pymorphy2.MorphAnalyzer()
 
-# Стоп-слова и синонимы (сокращено для компактности, в вашем файле оставьте полное)
+# Стоп-слова (оставьте ваш полный список здесь)
 RUSSIAN_STOPWORDS = {
-    'и', 'в', 'во', 'не', 'что', 'он', 'на', 'я', 'с', 'со', 'как', 'а', 'то',
-    'все', 'она', 'так', 'его', 'но', 'да', 'ты', 'к', 'у', 'же', 'вы', 'за',
-    'бы', 'по', 'только', 'ее', 'мне', 'было', 'вот', 'от', 'меня', 'еще', 'нет',
-    'о', 'из', 'ему', 'теперь', 'когда', 'даже', 'ну', 'уже', 'всего', 'всё',
-    'быть', 'будет', 'сказал', 'этот', 'это', 'здесь', 'тот', 'там', 'где',
-    'который', 'которая', 'которые', 'их', 'этого', 'этой', 'этому', 'этим',
-    'эти', 'этих', 'ваш', 'ваша', 'ваше', 'вашего', 'вашей', 'какой', 'какая',
-    'какое', 'какие', 'какого', 'каком', 'какими', 'мы', 'наш', 'наша', 'наше',
-    'мой', 'моя', 'моё', 'мои', 'твой', 'твоя', 'твоё', 'твои', 'сам', 'сама',
-    'само', 'сами', 'тот', 'та', 'то', 'те', 'чей', 'чья', 'чьё', 'чьи', 'кто',
-    'что', 'где', 'куда', 'откуда', 'когда', 'почему', 'зачем', 'как', 'либо',
-    'нибудь', 'также', 'потому', 'чтобы', 'который', 'свой', 'своя', 'своё',
-    'свои', 'самый', 'самая', 'самое', 'самые', 'или', 'ну', 'эх', 'ах', 'ох',
-    'без', 'над', 'под', 'перед', 'после', 'между', 'через', 'чтобы', 'ради',
-    'для', 'до', 'после', 'около', 'возле', 'рядом', 'мимо', 'вокруг', 'против',
-    'за', 'надо', 'нужно', 'может', 'можно', 'должен', 'должна', 'должно',
-    'должны', 'хочу', 'хочешь', 'хочет', 'хотим', 'хотите', 'хотят', 'буду',
-    'будешь', 'будет', 'будем', 'будете', 'будут', 'хотя', 'если', 'пока',
-    'чтоб', 'зато', 'итак', 'также', 'тоже'
+    'и', 'в', 'во', 'не', 'что', 'он', 'на', 'я', 'с', 'со', 'как', 'а', 'то', 'все', 'она', 'так', 'его', 'но', 'да', 'ты', 'к', 'у', 'же', 'вы', 'за', 'бы', 'по', 'только', 'ее', 'мне', 'было', 'вот', 'от', 'меня', 'еще', 'нет', 'о', 'из', 'ему', 'теперь', 'когда', 'даже', 'ну', 'уже', 'всего', 'всё', 'быть', 'будет', 'сказал', 'этот', 'это', 'здесь', 'тот', 'там', 'где', 'который', 'которая', 'которые', 'их', 'этого', 'этой', 'этому', 'этим', 'эти', 'этих', 'ваш', 'ваша', 'ваше', 'вашего', 'вашей', 'какой', 'какая', 'какое', 'какие', 'какого', 'каком', 'какими', 'мы', 'наш', 'наша', 'наше', 'мой', 'моя', 'моё', 'мои', 'твой', 'твоя', 'твоё', 'твои', 'сам', 'сама', 'само', 'сами', 'тот', 'та', 'то', 'те', 'чей', 'чья', 'чьё', 'чьи', 'кто', 'что', 'где', 'куда', 'откуда', 'когда', 'почему', 'зачем', 'как', 'либо', 'нибудь', 'также', 'потому', 'чтобы', 'который', 'свой', 'своя', 'своё', 'свои', 'самый', 'самая', 'самое', 'самые', 'или', 'ну', 'эх', 'ах', 'ох', 'без', 'над', 'под', 'перед', 'после', 'между', 'через', 'чтобы', 'ради', 'для', 'до', 'после', 'около', 'возле', 'рядом', 'мимо', 'вокруг', 'против', 'за', 'надо', 'нужно', 'может', 'можно', 'должен', 'должна', 'должно', 'должны', 'хочу', 'хочешь', 'хочет', 'хотим', 'хотите', 'хотят', 'буду', 'будешь', 'будет', 'будем', 'будете', 'будут', 'хотя', 'если', 'пока', 'чтоб', 'зато', 'итак', 'также', 'тоже'
 }
 
+# Синонимы (оставьте ваш полный список здесь)
 SYNONYMS = {
     'стоимость': ['цена', 'тариф', 'плата', 'расценка', 'сколько стоит'],
     'курс': ['обучение', 'программа', 'тренинг'],
@@ -93,7 +76,7 @@ SYNONYMS = {
     'roadmap': ['дорожная карта', 'карта развития', 'план']
 }
 
-# --- УТИЛИТЫ ДЛЯ РАБОТЫ С JSON ---
+# --- УТИЛИТЫ ---
 def load_json(file_path):
     if not os.path.exists(file_path): return []
     try:
@@ -103,8 +86,7 @@ def load_json(file_path):
 def save_json(file_path, data):
     with open(file_path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- NLP ФУНКЦИИ ---
-
+# --- NLP ---
 def preprocess_question(question: str) -> str:
     patterns = [r'^а если\s+', r'^что если\s+', r'^что будет если\s+', r'^можно ли\s+', r'^а что если\s+', r'^если я\s+', r'^а\s+', r'^ну\s+', r'^скажи\s+', r'^расскажи\s+', r'^объясни\s+']
     cleaned = question.lower()
@@ -159,41 +141,28 @@ def calculate_keyword_match_score(user_keywords: Set[str], item_keywords: Set[st
         if keyword_lower in question_lower: phrase_bonus += len(keyword_lower.split()) * 3
     return base_score + phrase_bonus
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ССЫЛОК ---
 def extract_links_and_buttons(text: str) -> Tuple[str, List[List[InlineKeyboardButton]]]:
     buttons = []
-    # Ищем ссылки
     url_pattern = r'(https?://[^\s<]+)'
     urls = re.findall(url_pattern, text)
     
     if urls:
         for raw_url in set(urls):
-            # 1. Очищаем URL от маркера [add_button], если он прилип
             clean_url = raw_url.replace("[add_button]", "")
-            
-            # 2. Очищаем URL от мусора в конце (запятые, скобки, точки)
             clean_url = clean_url.strip('.,;:!?()"\'[]{}')
-            
             if not clean_url: continue
-
-            # Умные названия кнопок
             label = "🔗 Ссылка"
             if "roadmap" in clean_url.lower(): label = "🗺 Дорожная карта"
             elif "Business-card" in clean_url or "avick23.github.io" in clean_url: label = "🌐 Сайт Алексея"
             elif "t.me" in clean_url: label = "💬 Telegram"
-            
             buttons.append([InlineKeyboardButton(label, url=clean_url)])
-        
-        # Удаляем найденные "сырые" ссылки из текста
         clean_text = re.sub(url_pattern, '', text).strip()
-        # Чистим мусор в тексте после удаления ссылок
         clean_text = re.sub(r'\s+\.', '.', clean_text)
         clean_text = re.sub(r'\(\s*\)', '', clean_text).strip()
         return clean_text, buttons
     return text, []
 
-# --- КЛАСС ИНДЕКСА И ПОИСК ---
-
+# --- КЛАСС ИНДЕКСА ---
 class KBIndex:
     def __init__(self):
         self.items = []
@@ -294,7 +263,6 @@ kb_index = None
 user_contexts = {}
 
 # --- АДМИН-ПАНЕЛЬ ---
-
 async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, data_type: str, page: int = 0):
     query = update.callback_query
     if query: await query.answer()
@@ -312,13 +280,13 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
     elif data_type == "like":
         all_fb = load_json(FEEDBACK_FILE)
         items = [x for x in all_fb if x.get("type") == "like"]
-        title = "👍 Лайки ответам бота"
+        title = "👍 Лайки"
         empty_msg = "Лайков пока нет."
         clear_callback = "admin_clear_like"
     elif data_type == "dislike":
         all_fb = load_json(FEEDBACK_FILE)
         items = [x for x in all_fb if x.get("type") == "dislike"]
-        title = "👎 Дизлайки (Плохие ответы)"
+        title = "👎 Дизлайки"
         empty_msg = "Жалоб пока нет."
         clear_callback = "admin_clear_dislike"
     elif data_type == "unknown":
@@ -355,13 +323,13 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
     keyboard = []
     if total_pages > 1:
         nav_row = []
-        if page > 0: nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"admin_page_{data_type}_{page-1}"))
+        if page > 0: nav_row.append(InlineKeyboardButton("◀️", callback_data=f"admin_page_{data_type}_{page-1}"))
         nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="ignore"))
-        if page < total_pages - 1: nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"admin_page_{data_type}_{page+1}"))
+        if page < total_pages - 1: nav_row.append(InlineKeyboardButton("▶️", callback_data=f"admin_page_{data_type}_{page+1}"))
         keyboard.append(nav_row)
         
-    if items: keyboard.append([InlineKeyboardButton("🗑 Очистить весь список", callback_data=clear_callback)])
-    if data_type != "consult": keyboard.append([InlineKeyboardButton("🔙 В меню управления", callback_data="admin_menu_main")])
+    if items: keyboard.append([InlineKeyboardButton("🗑 Очистить", callback_data=clear_callback)])
+    if data_type != "consult": keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_menu_main")])
 
     markup = InlineKeyboardMarkup(keyboard)
     
@@ -374,112 +342,92 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
 async def admin_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, data_type: str):
     query = update.callback_query
     await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("✅ Да, очистить", callback_data=f"admin_do_clear_{data_type}")],
-        [InlineKeyboardButton("❌ Отмена", callback_data=f"admin_page_{data_type}_0")]
-    ]
-    await query.edit_message_text("⚠️ <b>Вы уверены, что хотите очистить этот список?</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    keyboard = [[InlineKeyboardButton("✅ Да", callback_data=f"admin_do_clear_{data_type}")], [InlineKeyboardButton("❌ Нет", callback_data=f"admin_page_{data_type}_0")]]
+    await query.edit_message_text("⚠️ <b>Очистить список?</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 async def admin_do_clear(update: Update, context: ContextTypes.DEFAULT_TYPE, data_type: str):
     query = update.callback_query
     await query.answer()
-    
     if data_type == "consult": save_json(CONSULTATIONS_FILE, [])
     elif data_type == "like" or data_type == "dislike":
         fb = load_json(FEEDBACK_FILE)
-        new_fb = [x for x in fb if x.get("type") != data_type]
-        save_json(FEEDBACK_FILE, new_fb)
+        save_json(FEEDBACK_FILE, [x for x in fb if x.get("type") != data_type])
     elif data_type == "unknown": save_json(UNKNOWN_FILE, [])
-        
-    await query.edit_message_text(f"✅ Список <b>{data_type}</b> успешно очищен!", parse_mode="HTML")
+    await query.edit_message_text(f"✅ Очищено.", parse_mode="HTML")
 
 # --- ОБРАБОТЧИКИ ---
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if user_id not in user_contexts: user_contexts[user_id] = {"last_answer": None, "last_raw_question": None}
-
-    welcome_message = ("👋 Привет! Я Алексей, ваш цифровой помощник по обучению.\n\n"
-                       "Я знаю всё о моих методиках, дорожных картах и программе обучения.\n\n"
-                       "💡 Выберите действие или задайте вопрос текстом:")
-    
+    text = "👋 Привет! Я Алексей, ваш цифровой помощник.\n\n💡 Меню:"
     keyboard = [
-        [InlineKeyboardButton("🗓 Записаться на консультацию", callback_data="menu_consult")],
-        [InlineKeyboardButton("💰 Стоимость обучения", callback_data="menu_cost")],
-        [InlineKeyboardButton("🗺 Дорожные карты", callback_data="menu_roadmaps")],
-        [InlineKeyboardButton("🧠 О методе обучения", callback_data="menu_method")],
-        [InlineKeyboardButton("👨‍🏫 О преподавателе", callback_data="menu_about")]
+        [InlineKeyboardButton("🗓 Записаться", callback_data="menu_consult")],
+        [InlineKeyboardButton("💰 Стоимость", callback_data="menu_cost"), InlineKeyboardButton("🗺 Дорожные карты", callback_data="menu_roadmaps")],
+        [InlineKeyboardButton("🧠 О методе", callback_data="menu_method"), InlineKeyboardButton("👨‍🏫 О преподавателе", callback_data="menu_about")]
     ]
-    await update.message.reply_text(welcome_message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
     text = update.message.text.strip().lower()
-    
     if user_id != ADMIN_USER_ID: return False
-
-    if text == "заявки":
-        await admin_show_list(update, context, "consult", 0)
-        return True
-    
-    if text == "отзыв":
-        keyboard = [
-            [InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"),
-             InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")],
-            [InlineKeyboardButton("❓ Неизвестные вопросы", callback_data="admin_page_unknown_0")],
-            [InlineKeyboardButton("📋 Заявки", callback_data="admin_page_consult_0")]
-        ]
-        await update.message.reply_text("<b>📊 Меню управления данными</b>\nВыберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    if text in ["заявки", "заявка", "запись", "записи"]: await admin_show_list(update, context, "consult", 0); return True
+    if text in ["отзыв", "отзывы", "лайки", "дизлайки"]:
+        keyboard = [[InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"), InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")], [InlineKeyboardButton("❓ Неизвестные", callback_data="admin_page_unknown_0")]]
+        await update.message.reply_text("<b>📊 Меню</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return True
     return False
+    
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data
     await query.answer()
     
-    # Админ-навигация
-    if data.startswith("admin_page_"):
-        parts = data.split("_")
-        dtype = parts[2]
-        page = int(parts[3])
-        await admin_show_list(update, context, dtype, page)
-        return
-    if data.startswith("admin_clear_"):
-        dtype = data.replace("admin_clear_", "")
-        await admin_clear_confirm(update, context, dtype)
-        return
-    if data.startswith("admin_do_clear_"):
-        dtype = data.replace("admin_do_clear_", "")
-        await admin_do_clear(update, context, dtype)
-        return
-    if data == "admin_menu_main":
-        keyboard = [
-             [InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"), InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")],
-             [InlineKeyboardButton("❓ Неизвестные вопросы", callback_data="admin_page_unknown_0")],
-             [InlineKeyboardButton("📋 Заявки", callback_data="admin_page_consult_0")]
-        ]
-        try: await query.edit_message_text("<b>📊 Меню управления данными</b>\nВыберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        except: pass
-        return
+    # Админ
+    if data.startswith("admin_page_"): parts = data.split("_"); await admin_show_list(update, context, parts[2], int(parts[3])); return
+    if data.startswith("admin_clear_"): await admin_clear_confirm(update, context, data.replace("admin_clear_", "")); return
+    if data.startswith("admin_do_clear_"): await admin_do_clear(update, context, data.replace("admin_do_clear_", "")); return
+    if data == "admin_menu_main": await handle_admin_text(Update(update.update_id, callback_query=None, message=query.message), context); return # fix for recursion, simplified below
+    if data == "admin_menu_main": keyboard = [[InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"), InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")], [InlineKeyboardButton("❓ Неизвестные", callback_data="admin_page_unknown_0")]]; await query.edit_message_text("<b>📊 Меню</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"); return
 
-    # Пользовательская навигация
-    if data == "menu_consult":
-        keyboard = [[InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)], [InlineKeyboardButton("📝 Оставить заявку", callback_data="consultation")]]
-        await query.edit_message_text("Выберите удобный способ записи:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
+    # Пользователь
+    if data == "menu_consult": keyboard = [[InlineKeyboardButton("📅 Расписание", url=CALENDAR_URL)], [InlineKeyboardButton("📝 Заявка", callback_data="consultation")]]; await query.edit_message_text("Выберите:", reply_markup=InlineKeyboardMarkup(keyboard)); return
     if data == "menu_roadmaps": await roadmaps_command(update, context, edit_mode=True); return
-    if data == "menu_cost": answer, _, _ = search_knowledge_base("стоимость обучения", kb_index) if kb_index else ("База недоступна", 0, []); await query.message.reply_text(answer); return
-    if data == "menu_method": answer, _, _ = search_knowledge_base("метод выстраданного познания", kb_index) if kb_index else ("База недоступна", 0, []); await query.message.reply_text(answer); return
-    if data == "menu_about": answer, _, _ = search_knowledge_base("кто такой алексей", kb_index) if kb_index else ("База недоступна", 0, []); await query.message.reply_text(answer); return
+        
+    # ИСПРАВЛЕННАЯ ЛОГИКА МЕНЮ
+    if data in ["menu_cost", "menu_method", "menu_about"]:
+        q_map = {"menu_cost": "стоимость", "menu_method": "метод выстраданного познания", "menu_about": "кто такой алексей"}
+        answer, _, candidates = search_knowledge_base(q_map[data], kb_index) if kb_index else ("Ошибка", 0, [])
+        
+        # Обработка текста (удаление маркера, извлечение ссылок)
+        clean_text = answer.replace("[add_button]", "").strip()
+        display_text, url_buttons = extract_links_and_buttons(clean_text)
+        
+        # Добавление кнопки записи, если маркер был
+        if "[add_button]" in answer:
+            url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
+        
+        # Поиск индекса для лайков
+        ans_idx = 0
+        if candidates: ans_idx = candidates[0]['index']
+        else:
+            for i, item in enumerate(kb_index.items):
+                if item['context'] == answer: ans_idx = i; break
+        
+        # Добавление кнопок лайков
+        url_buttons.append([InlineKeyboardButton("👍", callback_data=f"like_{ans_idx}"), InlineKeyboardButton("👎", callback_data=f"dislike_{ans_idx}")])
+
+        await query.message.reply_text(display_text, reply_markup=InlineKeyboardMarkup(url_buttons), disable_web_page_preview=True, parse_mode="HTML")
+        return
 
     if data.startswith("clarify_"):
-        if data == "clarify_none": await query.edit_message_text("Хорошо, попробуйте сформулировать иначе."); return
+        if data == "clarify_none": await query.edit_message_text("Хорошо."); return
         idx = int(data.split("_")[1])
         context_data = kb_index.items[idx]["context"]
         clean_text = context_data.replace("[add_button]", "").strip()
         display_text, url_buttons = extract_links_and_buttons(clean_text)
-        if "[add_button]" in context_data: url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
+        if "[add_button]" in context_data: url_buttons.append([InlineKeyboardButton("📝 Записаться", callback_data="consultation")])
         url_buttons.append([InlineKeyboardButton("👍", callback_data=f"like_{idx}"), InlineKeyboardButton("👎", callback_data=f"dislike_{idx}")])
         await query.edit_message_text(display_text, reply_markup=InlineKeyboardMarkup(url_buttons), parse_mode="HTML", disable_web_page_preview=True)
         return
@@ -489,12 +437,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def roadmaps_command(update: Update, context: ContextTypes.DEFAULT_TYPE, edit_mode: bool = False) -> None:
     keyboard = [
-        [InlineKeyboardButton("🐍 Python Roadmap", url="https://avick23.github.io/roadmap_python/")],
-        [InlineKeyboardButton("⚡ Backend Roadmap", url="https://avick23.github.io/roadmap_backend/")],
-        [InlineKeyboardButton("🐹 Golang Roadmap", url="https://avick23.github.io/roadmap_golang/")],
-        [InlineKeyboardButton("🔧 DevOps Roadmap", url="https://avick23.github.io/roadmap_devops/")]
+        [InlineKeyboardButton("🐍 Python", url="https://avick23.github.io/roadmap_python/")],
+        [InlineKeyboardButton("⚡ Backend", url="https://avick23.github.io/roadmap_backend/")],
+        [InlineKeyboardButton("🐹 Golang", url="https://avick23.github.io/roadmap_golang/")],
+        [InlineKeyboardButton("🔧 DevOps", url="https://avick23.github.io/roadmap_devops/")]
     ]
-    text = "🗺 <b>Мои дорожные карты</b>\n\nВыберите направление:"
+    text = "🗺 <b>Дорожные карты</b>"
     if edit_mode: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
@@ -507,11 +455,11 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     consultations.append({"user_id": user.id, "username": user.username or "Нет", "first_name": user.first_name or "", "last_name": user.last_name or "", "timestamp": timestamp})
     save_json(CONSULTATIONS_FILE, consultations)
     
-    try: await context.bot.send_message(ADMIN_USER_ID, f"🔔 <b>Новая заявка!</b>\n\n👤 {user.first_name} (@{user.username})\n⏰ {timestamp}", parse_mode="HTML")
+    try: await context.bot.send_message(ADMIN_USER_ID, f"🔔 Заявка от @{user.username}", parse_mode="HTML")
     except: pass
     
-    keyboard = [[InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)], [InlineKeyboardButton("📱 Написать в Telegram", url="https://t.me/AVick23")]]
-    await query.edit_message_text("✅ <b>Ваша заявка сохранена!</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    keyboard = [[InlineKeyboardButton("📅 Расписание", url=CALENDAR_URL)]]
+    await query.edit_message_text("✅ <b>Заявка сохранена!</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -532,7 +480,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.edit_message_reply_markup(None)
     if fb_type == "dislike":
         await query.message.reply_text("Спасибо за обратную связь!")
-        try: await context.bot.send_message(ADMIN_USER_ID, f"👎 <b>Дизлайк!</b>\nQ: {question}", parse_mode="HTML")
+        try: await context.bot.send_message(ADMIN_USER_ID, f"👎 Дизлайк: {question}", parse_mode="HTML")
         except: pass
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -551,8 +499,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if score > 3.5 and answer: final_answer = answer
     elif score > 1.5 and candidates:
         keyboard = [[InlineKeyboardButton(f"Ты про: {c['topic']}?", callback_data=f"clarify_{c['index']}")] for c in candidates]
-        keyboard.append([InlineKeyboardButton("❌ Это не то", callback_data="clarify_none")])
-        await update.message.reply_text("Я не совсем уверен, что вы имели в виду. Вы спрашивали про:", reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard.append([InlineKeyboardButton("❌ Не то", callback_data="clarify_none")])
+        await update.message.reply_text("Уточните:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
     elif FUZZY_ENABLED:
         suggestion = get_fuzzy_suggestion(user_question, kb_index)
@@ -560,15 +508,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             answer, score, candidates = search_knowledge_base(suggestion, kb_index)
             if score > 1.5: final_answer = answer
             if score < 3.5 and candidates:
-                keyboard = [[InlineKeyboardButton(f"Может вы имели в виду: {suggestion}?", callback_data=f"clarify_{candidates[0]['index']}")]]
-                await update.message.reply_text("Возможно, вы опечатались?", reply_markup=InlineKeyboardMarkup(keyboard))
+                keyboard = [[InlineKeyboardButton(f"Может: {suggestion}?", callback_data=f"clarify_{candidates[0]['index']}")]]
+                await update.message.reply_text("Опечатка?", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
 
     if not final_answer:
         unk = load_json(UNKNOWN_FILE)
         unk.append({"question": user_question, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
         save_json(UNKNOWN_FILE, unk)
-        await update.message.reply_text("К сожалению, я не нашел ответа в своей базе знаний. Я сохранил ваш вопрос.\n\nПопробуйте /start.")
+        await update.message.reply_text("Не нашел ответа. /start")
         return
 
     clean_answer_for_memory = final_answer.replace("[add_button]", "").strip()
@@ -576,7 +524,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     display_text, url_buttons = extract_links_and_buttons(clean_answer_for_memory)
     
-    if "[add_button]" in final_answer: url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
+    if "[add_button]" in final_answer: url_buttons.append([InlineKeyboardButton("📝 Записаться", callback_data="consultation")])
     
     ans_idx = 0
     if candidates and candidates[0]['context'] == final_answer: ans_idx = candidates[0]['index']
@@ -596,9 +544,9 @@ def main() -> None:
     try:
         kb = load_knowledge_base('main.json')
         kb_index = preprocess_knowledge_base(kb)
-        print("✅ База знаний загружена")
+        print("✅ База загружена")
     except Exception as e:
-        print(f"❌ Ошибка загрузки KB: {str(e)}")
+        print(f"❌ Ошибка: {str(e)}")
         return
     
     application = Application.builder().token(token).build()
