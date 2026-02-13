@@ -41,7 +41,7 @@ ITEMS_PER_PAGE = 5
 
 morph = pymorphy2.MorphAnalyzer()
 
-# Стоп-слова и синонимы
+# Стоп-слова и синонимы (сокращено для компактности, в вашем файле оставьте полное)
 RUSSIAN_STOPWORDS = {
     'и', 'в', 'во', 'не', 'что', 'он', 'на', 'я', 'с', 'со', 'как', 'а', 'то',
     'все', 'она', 'так', 'его', 'но', 'да', 'ты', 'к', 'у', 'же', 'вы', 'за',
@@ -95,33 +95,27 @@ SYNONYMS = {
 
 # --- УТИЛИТЫ ДЛЯ РАБОТЫ С JSON ---
 def load_json(file_path):
-    if not os.path.exists(file_path):
-        return []
+    if not os.path.exists(file_path): return []
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return []
+        with open(file_path, "r", encoding="utf-8") as f: return json.load(f)
+    except: return []
 
 def save_json(file_path, data):
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    with open(file_path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
 # --- NLP ФУНКЦИИ ---
 
 def preprocess_question(question: str) -> str:
     patterns = [r'^а если\s+', r'^что если\s+', r'^что будет если\s+', r'^можно ли\s+', r'^а что если\s+', r'^если я\s+', r'^а\s+', r'^ну\s+', r'^скажи\s+', r'^расскажи\s+', r'^объясни\s+']
     cleaned = question.lower()
-    for pattern in patterns:
-        cleaned = re.sub(pattern, '', cleaned)
+    for pattern in patterns: cleaned = re.sub(pattern, '', cleaned)
     return cleaned.strip()
 
 def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
     expanded = set(keywords)
     for word in keywords:
         for base, synonyms in SYNONYMS.items():
-            if word == base or any(word == syn for syn in synonyms):
-                expanded.update([base] + synonyms)
+            if word == base or any(word == syn for syn in synonyms): expanded.update([base] + synonyms)
     return expanded
 
 def load_knowledge_base(file_path: str) -> list:
@@ -165,19 +159,36 @@ def calculate_keyword_match_score(user_keywords: Set[str], item_keywords: Set[st
         if keyword_lower in question_lower: phrase_bonus += len(keyword_lower.split()) * 3
     return base_score + phrase_bonus
 
+# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ССЫЛОК ---
 def extract_links_and_buttons(text: str) -> Tuple[str, List[List[InlineKeyboardButton]]]:
     buttons = []
-    url_pattern = r'(https?://[^\s<]+|www\.[^\s<]+)'
+    # Ищем ссылки
+    url_pattern = r'(https?://[^\s<]+)'
     urls = re.findall(url_pattern, text)
+    
     if urls:
-        for url in set(urls):
+        for raw_url in set(urls):
+            # 1. Очищаем URL от маркера [add_button], если он прилип
+            clean_url = raw_url.replace("[add_button]", "")
+            
+            # 2. Очищаем URL от мусора в конце (запятые, скобки, точки)
+            clean_url = clean_url.strip('.,;:!?()"\'[]{}')
+            
+            if not clean_url: continue
+
+            # Умные названия кнопок
             label = "🔗 Ссылка"
-            if "roadmap" in url.lower(): label = "🗺 Дорожная карта"
-            elif "Business-card" in url or "avick23.github.io" in url: label = "🌐 Сайт Алексея"
-            elif "t.me" in url: label = "💬 Telegram"
-            buttons.append([InlineKeyboardButton(label, url=url)])
+            if "roadmap" in clean_url.lower(): label = "🗺 Дорожная карта"
+            elif "Business-card" in clean_url or "avick23.github.io" in clean_url: label = "🌐 Сайт Алексея"
+            elif "t.me" in clean_url: label = "💬 Telegram"
+            
+            buttons.append([InlineKeyboardButton(label, url=clean_url)])
+        
+        # Удаляем найденные "сырые" ссылки из текста
         clean_text = re.sub(url_pattern, '', text).strip()
+        # Чистим мусор в тексте после удаления ссылок
         clean_text = re.sub(r'\s+\.', '.', clean_text)
+        clean_text = re.sub(r'\(\s*\)', '', clean_text).strip()
         return clean_text, buttons
     return text, []
 
@@ -282,10 +293,9 @@ def get_fuzzy_suggestion(question: str, kb_index: KBIndex) -> Optional[str]:
 kb_index = None
 user_contexts = {}
 
-# --- ОБРАБОТЧИКИ АДМИН-ПАНЕЛИ ---
+# --- АДМИН-ПАНЕЛЬ ---
 
 async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, data_type: str, page: int = 0):
-    """Отображение списков с пагинацией"""
     query = update.callback_query
     if query: await query.answer()
     
@@ -309,7 +319,7 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
         all_fb = load_json(FEEDBACK_FILE)
         items = [x for x in all_fb if x.get("type") == "dislike"]
         title = "👎 Дизлайки (Плохие ответы)"
-        empty_msg = "Жалоб пока нет. Отлично!"
+        empty_msg = "Жалоб пока нет."
         clear_callback = "admin_clear_dislike"
     elif data_type == "unknown":
         items = load_json(UNKNOWN_FILE)
@@ -319,12 +329,9 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
 
     total_items = len(items)
     total_pages = math.ceil(total_items / ITEMS_PER_PAGE) if total_items > 0 else 1
-    
-    # Корректировка страницы
     if page < 0: page = 0
     if page >= total_pages: page = total_pages - 1
     
-    # Формирование текста
     text = f"<b>{title}</b> (Всего: {total_items})\n\n"
     
     if not items:
@@ -341,46 +348,32 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
                          f"   ⏰ {item.get('timestamp', '')}\n\n")
             elif data_type == "unknown":
                 text += f"{i}. {item.get('question', '???')}\n   ⏰ {item.get('timestamp', '')}\n\n"
-            else: # Like/Dislike
+            else:
                 text += (f"{i}. <b>Вопрос:</b> {item.get('question', '???')}\n"
                          f"   <b>Ответ:</b> {item.get('answer', '???')[:30]}...\n\n")
 
-    # Клавиатура
     keyboard = []
-    
-    # Навигация
     if total_pages > 1:
         nav_row = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"admin_page_{data_type}_{page-1}"))
+        if page > 0: nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"admin_page_{data_type}_{page-1}"))
         nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="ignore"))
-        if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"admin_page_{data_type}_{page+1}"))
+        if page < total_pages - 1: nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"admin_page_{data_type}_{page+1}"))
         keyboard.append(nav_row)
         
-    # Управление
-    if items:
-        keyboard.append([InlineKeyboardButton("🗑 Очистить весь список", callback_data=clear_callback)])
-    
-    # Назад
-    if data_type != "consult": # Если это подменю отзыва, добавляем кнопку "В меню"
-         keyboard.append([InlineKeyboardButton("🔙 В меню управления", callback_data="admin_menu_main")])
+    if items: keyboard.append([InlineKeyboardButton("🗑 Очистить весь список", callback_data=clear_callback)])
+    if data_type != "consult": keyboard.append([InlineKeyboardButton("🔙 В меню управления", callback_data="admin_menu_main")])
 
     markup = InlineKeyboardMarkup(keyboard)
     
     if query:
-        try:
-            await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
-        except:
-            pass # Если текст не изменился
+        try: await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+        except: pass
     else:
         await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
 async def admin_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, data_type: str):
-    """Подтверждение очистки"""
     query = update.callback_query
     await query.answer()
-    
     keyboard = [
         [InlineKeyboardButton("✅ Да, очистить", callback_data=f"admin_do_clear_{data_type}")],
         [InlineKeyboardButton("❌ Отмена", callback_data=f"admin_page_{data_type}_0")]
@@ -388,23 +381,19 @@ async def admin_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("⚠️ <b>Вы уверены, что хотите очистить этот список?</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 async def admin_do_clear(update: Update, context: ContextTypes.DEFAULT_TYPE, data_type: str):
-    """Очистка файла"""
     query = update.callback_query
     await query.answer()
     
-    if data_type == "consult":
-        save_json(CONSULTATIONS_FILE, [])
+    if data_type == "consult": save_json(CONSULTATIONS_FILE, [])
     elif data_type == "like" or data_type == "dislike":
-        # Удаляем только конкретный тип фидбека
         fb = load_json(FEEDBACK_FILE)
         new_fb = [x for x in fb if x.get("type") != data_type]
         save_json(FEEDBACK_FILE, new_fb)
-    elif data_type == "unknown":
-        save_json(UNKNOWN_FILE, [])
+    elif data_type == "unknown": save_json(UNKNOWN_FILE, [])
         
     await query.edit_message_text(f"✅ Список <b>{data_type}</b> успешно очищен!", parse_mode="HTML")
 
-# --- ОБРАБОТЧИКИ TELEGRAM ---
+# --- ОБРАБОТЧИКИ ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -424,7 +413,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(welcome_message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Обработка команд админа текстом. Возвращает True если это была команда админа."""
     user_id = update.effective_user.id
     text = update.message.text.strip().lower()
     
@@ -443,7 +431,6 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         ]
         await update.message.reply_text("<b>📊 Меню управления данными</b>\nВыберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return True
-        
     return False
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -458,27 +445,21 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         page = int(parts[3])
         await admin_show_list(update, context, dtype, page)
         return
-    
     if data.startswith("admin_clear_"):
         dtype = data.replace("admin_clear_", "")
         await admin_clear_confirm(update, context, dtype)
         return
-        
     if data.startswith("admin_do_clear_"):
         dtype = data.replace("admin_do_clear_", "")
         await admin_do_clear(update, context, dtype)
         return
-        
     if data == "admin_menu_main":
-        # Возврат в меню "отзыв"
         keyboard = [
-             [InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"),
-              InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")],
+             [InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"), InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")],
              [InlineKeyboardButton("❓ Неизвестные вопросы", callback_data="admin_page_unknown_0")],
              [InlineKeyboardButton("📋 Заявки", callback_data="admin_page_consult_0")]
         ]
-        try:
-            await query.edit_message_text("<b>📊 Меню управления данными</b>\nВыберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        try: await query.edit_message_text("<b>📊 Меню управления данными</b>\nВыберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         except: pass
         return
 
@@ -487,30 +468,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         keyboard = [[InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)], [InlineKeyboardButton("📝 Оставить заявку", callback_data="consultation")]]
         await query.edit_message_text("Выберите удобный способ записи:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
-    
-    if data == "menu_roadmaps":
-        await roadmaps_command(update, context, edit_mode=True)
-        return
-        
-    if data == "menu_cost":
-        answer, _, _ = search_knowledge_base("стоимость обучения", kb_index) if kb_index else ("База недоступна", 0, [])
-        await query.message.reply_text(answer)
-        return
-
-    if data == "menu_method":
-        answer, _, _ = search_knowledge_base("метод выстраданного познания", kb_index) if kb_index else ("База недоступна", 0, [])
-        await query.message.reply_text(answer)
-        return
-        
-    if data == "menu_about":
-        answer, _, _ = search_knowledge_base("кто такой алексей", kb_index) if kb_index else ("База недоступна", 0, [])
-        await query.message.reply_text(answer)
-        return
+    if data == "menu_roadmaps": await roadmaps_command(update, context, edit_mode=True); return
+    if data == "menu_cost": answer, _, _ = search_knowledge_base("стоимость обучения", kb_index) if kb_index else ("База недоступна", 0, []); await query.message.reply_text(answer); return
+    if data == "menu_method": answer, _, _ = search_knowledge_base("метод выстраданного познания", kb_index) if kb_index else ("База недоступна", 0, []); await query.message.reply_text(answer); return
+    if data == "menu_about": answer, _, _ = search_knowledge_base("кто такой алексей", kb_index) if kb_index else ("База недоступна", 0, []); await query.message.reply_text(answer); return
 
     if data.startswith("clarify_"):
-        if data == "clarify_none":
-             await query.edit_message_text("Хорошо, попробуйте сформулировать вопрос иначе или используйте меню.")
-             return
+        if data == "clarify_none": await query.edit_message_text("Хорошо, попробуйте сформулировать иначе."); return
         idx = int(data.split("_")[1])
         context_data = kb_index.items[idx]["context"]
         clean_text = context_data.replace("[add_button]", "").strip()
@@ -520,13 +484,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text(display_text, reply_markup=InlineKeyboardMarkup(url_buttons), parse_mode="HTML", disable_web_page_preview=True)
         return
 
-    if data == "consultation":
-        await consultation_callback(update, context)
-        return
-
-    if data.startswith("like_") or data.startswith("dislike_"):
-        await feedback_callback(update, context)
-        return
+    if data == "consultation": await consultation_callback(update, context); return
+    if data.startswith("like_") or data.startswith("dislike_"): await feedback_callback(update, context); return
 
 async def roadmaps_command(update: Update, context: ContextTypes.DEFAULT_TYPE, edit_mode: bool = False) -> None:
     keyboard = [
@@ -535,7 +494,7 @@ async def roadmaps_command(update: Update, context: ContextTypes.DEFAULT_TYPE, e
         [InlineKeyboardButton("🐹 Golang Roadmap", url="https://avick23.github.io/roadmap_golang/")],
         [InlineKeyboardButton("🔧 DevOps Roadmap", url="https://avick23.github.io/roadmap_devops/")]
     ]
-    text = ("🗺 <b>Мои дорожные карты (Roadmaps)</b>\n\nЭто визуальные планы развития для разных направлений. Выберите интересующее вас направление:")
+    text = "🗺 <b>Мои дорожные карты</b>\n\nВыберите направление:"
     if edit_mode: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
@@ -544,20 +503,15 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     user = query.from_user
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Сохранение
     consultations = load_json(CONSULTATIONS_FILE)
     consultations.append({"user_id": user.id, "username": user.username or "Нет", "first_name": user.first_name or "", "last_name": user.last_name or "", "timestamp": timestamp})
     save_json(CONSULTATIONS_FILE, consultations)
     
-    # Уведомление админа
-    try:
-        admin_msg = f"🔔 <b>Новая заявка!</b>\n\n👤 {user.first_name} (@{user.username})\n⏰ {timestamp}"
-        await context.bot.send_message(ADMIN_USER_ID, admin_msg, parse_mode="HTML")
+    try: await context.bot.send_message(ADMIN_USER_ID, f"🔔 <b>Новая заявка!</b>\n\n👤 {user.first_name} (@{user.username})\n⏰ {timestamp}", parse_mode="HTML")
     except: pass
     
-    # Ответ
     keyboard = [[InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)], [InlineKeyboardButton("📱 Написать в Telegram", url="https://t.me/AVick23")]]
-    await query.edit_message_text("✅ <b>Ваша заявка сохранена!</b>\n\nЯ свяжусь с вами в ближайшее время.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    await query.edit_message_text("✅ <b>Ваша заявка сохранена!</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -565,7 +519,6 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user = query.from_user
     await query.answer()
     
-    # Сохраняем и лайки, и дизлайки
     fb_type = "like" if "like_" in data else "dislike"
     idx = int(data.split("_")[1])
     
@@ -573,39 +526,25 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     question = user_contexts.get(user.id, {}).get("last_raw_question", "???")
     
     feedback_list = load_json(FEEDBACK_FILE)
-    feedback_list.append({
-        "type": fb_type,
-        "question": question,
-        "answer": answer,
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
+    feedback_list.append({"type": fb_type, "question": question, "answer": answer, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     save_json(FEEDBACK_FILE, feedback_list)
     
-    await query.edit_message_reply_markup(None) # Убираем кнопки
-    
+    await query.edit_message_reply_markup(None)
     if fb_type == "dislike":
-        await query.message.reply_text("Спасибо за обратную связь! Я учту это.")
-        # Уведомление админа о дизлайке
-        try:
-            await context.bot.send_message(ADMIN_USER_ID, f"👎 <b>Дизлайк!</b>\nQ: {question}\nA: {answer[:50]}...", parse_mode="HTML")
+        await query.message.reply_text("Спасибо за обратную связь!")
+        try: await context.bot.send_message(ADMIN_USER_ID, f"👎 <b>Дизлайк!</b>\nQ: {question}", parse_mode="HTML")
         except: pass
-    else:
-        # Можно ответить тихо или тоже thanked
-        pass
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     user_question = update.message.text.strip()
     user_question_lower = user_question.lower()
     
-    # 1. Проверка админ-команд ("заявки", "отзыв")
-    if await handle_admin_text(update, context):
-        return
+    if await handle_admin_text(update, context): return
 
     if user_id not in user_contexts: user_contexts[user_id] = {"last_answer": None, "last_raw_question": None}
     user_contexts[user_id]["last_raw_question"] = user_question
 
-    # 2. Поиск ответа
     answer, score, candidates = search_knowledge_base(user_question, kb_index)
     final_answer = None
     
@@ -626,11 +565,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
 
     if not final_answer:
-        # Логируем неизвестное
         unk = load_json(UNKNOWN_FILE)
         unk.append({"question": user_question, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
         save_json(UNKNOWN_FILE, unk)
-        await update.message.reply_text("К сожалению, я не нашел ответа в своей базе знаний. Я сохранил ваш вопрос, чтобы стать умнее.\n\nПопробуйте /start.")
+        await update.message.reply_text("К сожалению, я не нашел ответа в своей базе знаний. Я сохранил ваш вопрос.\n\nПопробуйте /start.")
         return
 
     clean_answer_for_memory = final_answer.replace("[add_button]", "").strip()
@@ -640,7 +578,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     if "[add_button]" in final_answer: url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
     
-    # Находим индекс для фидбека
     ans_idx = 0
     if candidates and candidates[0]['context'] == final_answer: ans_idx = candidates[0]['index']
     else:
@@ -665,10 +602,9 @@ def main() -> None:
         return
     
     application = Application.builder().token(token).build()
-    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("roadmaps", roadmaps_command))
-    application.add_handler(CallbackQueryHandler(menu_callback)) # Ловит всё
+    application.add_handler(CallbackQueryHandler(menu_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("🚀 Бот запущен")
