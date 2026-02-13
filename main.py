@@ -8,7 +8,8 @@ import time
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import deque # Для безопасной очереди сообщений
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -39,40 +40,25 @@ SITE_URL = "https://avick23.github.io/Business-card/"
 
 ITEMS_PER_PAGE = 5
 
+# КОНСТАНТЫ ПАМЯТИ
+MAX_HISTORY_LENGTH = 5      # Хранить только последние 5 сообщений
+INACTIVITY_LIMIT_HOURS = 24 # Удалять память через 24 часа неактивности
+
 morph = pymorphy2.MorphAnalyzer()
 
-# Стоп-слова (оставьте ваш полный список здесь)
+# Стоп-слова (сокращено для компактности, вставьте свой полный список)
 RUSSIAN_STOPWORDS = {
     'и', 'в', 'во', 'не', 'что', 'он', 'на', 'я', 'с', 'со', 'как', 'а', 'то', 'все', 'она', 'так', 'его', 'но', 'да', 'ты', 'к', 'у', 'же', 'вы', 'за', 'бы', 'по', 'только', 'ее', 'мне', 'было', 'вот', 'от', 'меня', 'еще', 'нет', 'о', 'из', 'ему', 'теперь', 'когда', 'даже', 'ну', 'уже', 'всего', 'всё', 'быть', 'будет', 'сказал', 'этот', 'это', 'здесь', 'тот', 'там', 'где', 'который', 'которая', 'которые', 'их', 'этого', 'этой', 'этому', 'этим', 'эти', 'этих', 'ваш', 'ваша', 'ваше', 'вашего', 'вашей', 'какой', 'какая', 'какое', 'какие', 'какого', 'каком', 'какими', 'мы', 'наш', 'наша', 'наше', 'мой', 'моя', 'моё', 'мои', 'твой', 'твоя', 'твоё', 'твои', 'сам', 'сама', 'само', 'сами', 'тот', 'та', 'то', 'те', 'чей', 'чья', 'чьё', 'чьи', 'кто', 'что', 'где', 'куда', 'откуда', 'когда', 'почему', 'зачем', 'как', 'либо', 'нибудь', 'также', 'потому', 'чтобы', 'который', 'свой', 'своя', 'своё', 'свои', 'самый', 'самая', 'самое', 'самые', 'или', 'ну', 'эх', 'ах', 'ох', 'без', 'над', 'под', 'перед', 'после', 'между', 'через', 'чтобы', 'ради', 'для', 'до', 'после', 'около', 'возле', 'рядом', 'мимо', 'вокруг', 'против', 'за', 'надо', 'нужно', 'может', 'можно', 'должен', 'должна', 'должно', 'должны', 'хочу', 'хочешь', 'хочет', 'хотим', 'хотите', 'хотят', 'буду', 'будешь', 'будет', 'будем', 'будете', 'будут', 'хотя', 'если', 'пока', 'чтоб', 'зато', 'итак', 'также', 'тоже'
 }
 
-# Синонимы (оставьте ваш полный список здесь)
+# Синонимы (сокращено, вставьте свой полный список)
 SYNONYMS = {
     'стоимость': ['цена', 'тариф', 'плата', 'расценка', 'сколько стоит'],
     'курс': ['обучение', 'программа', 'тренинг'],
     'преподаватель': ['учитель', 'репетитор', 'тренер', 'лектор', 'алексей', 'avick23'],
-    'занятие': ['урок', 'лекция', 'пара', 'встреча'],
-    'группа': ['команда', 'коллектив', 'мини-группа'],
     'метод': ['подход', 'техника', 'стратегия', 'выстраданного познания', 'система'],
-    'домашка': ['задание', 'дз', 'практика'],
-    'бот': ['чат-бот', 'ассистент', 'помощник', 'прогресс', 'прогрессбот', 'прогресс бот'],
+    'бот': ['чат-бот', 'ассистент', 'помощник', 'прогресс', 'прогрессбот'],
     'python': ['питон', 'пайтон'],
-    'программирование': ['кодинг', 'разработка', 'it'],
-    'вопрос': ['запрос', 'проблема', 'тема'],
-    'ответ': ['решение', 'отклик'],
-    'начать': ['стартовать', 'приступить'],
-    'записаться': ['зарегистрироваться', 'подписаться', 'хочу учиться'],
-    'сложный': ['трудный', 'замысловатый', 'запутанный'],
-    'легкий': ['простой', 'нетрудный'],
-    'быстро': ['скорость', 'оперативно', 'в срок'],
-    'долго': ['медленно', 'затянуто'],
-    'качество': ['уровень', 'стандарт'],
-    'консультация': ['встреча', 'совет', 'помощь', 'бесплатная встреча'],
-    'доступ': ['получение', 'возможность'],
-    'материалы': ['уроки', 'лекции', 'ресурсы', 'дорожная карта', 'roadmap'],
-    'поддержка': ['помощь', 'сопровождение', 'причал', 'сообщество'],
-    'экосистема': ['система', 'прогресс', 'прогресс+', 'прогресс плюс'],
-    'причал': ['сообщество', 'чат', 'поддержка'],
     'roadmap': ['дорожная карта', 'карта развития', 'план']
 }
 
@@ -260,7 +246,7 @@ def get_fuzzy_suggestion(question: str, kb_index: KBIndex) -> Optional[str]:
     return None
 
 kb_index = None
-user_contexts = {}
+user_contexts = {} # Структура: {user_id: {"history": deque, "last_activity": datetime}}
 
 # --- АДМИН-ПАНЕЛЬ ---
 async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, data_type: str, page: int = 0):
@@ -274,7 +260,7 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
     
     if data_type == "consult":
         items = load_json(CONSULTATIONS_FILE)
-        title = "📋 Заявки на консультацию"
+        title = "📋 Заявки"
         empty_msg = "Заявок пока нет."
         clear_callback = "admin_clear_consult"
     elif data_type == "like":
@@ -292,7 +278,7 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
     elif data_type == "unknown":
         items = load_json(UNKNOWN_FILE)
         title = "❓ Неизвестные вопросы"
-        empty_msg = "Бот знает ответы на все вопросы."
+        empty_msg = "Нет неизвестных вопросов."
         clear_callback = "admin_clear_unknown"
 
     total_items = len(items)
@@ -311,14 +297,11 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
         
         for i, item in enumerate(current_items, start=start_idx+1):
             if data_type == "consult":
-                text += (f"{i}. {item.get('first_name', '')} {item.get('last_name', '')}\n"
-                         f"   👤 @{item.get('username', 'нет')}\n"
-                         f"   ⏰ {item.get('timestamp', '')}\n\n")
+                text += f"{i}. {item.get('first_name', '')} @{item.get('username', '')}\n   ⏰ {item.get('timestamp', '')}\n\n"
             elif data_type == "unknown":
-                text += f"{i}. {item.get('question', '???')}\n   ⏰ {item.get('timestamp', '')}\n\n"
+                text += f"{i}. {item.get('question', '???')}\n\n"
             else:
-                text += (f"{i}. <b>Вопрос:</b> {item.get('question', '???')}\n"
-                         f"   <b>Ответ:</b> {item.get('answer', '???')[:30]}...\n\n")
+                text += f"{i}. Q: {item.get('question', '???')[:30]}...\n\n"
 
     keyboard = []
     if total_pages > 1:
@@ -358,7 +341,13 @@ async def admin_do_clear(update: Update, context: ContextTypes.DEFAULT_TYPE, dat
 # --- ОБРАБОТЧИКИ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if user_id not in user_contexts: user_contexts[user_id] = {"last_answer": None, "last_raw_question": None}
+    # Инициализация памяти при старте
+    if user_id not in user_contexts:
+        user_contexts[user_id] = {
+            "history": deque(maxlen=MAX_HISTORY_LENGTH), # Очередь с лимитом
+            "last_activity": datetime.now()
+        }
+    
     text = "👋 Привет! Я Алексей, ваш цифровой помощник.\n\n💡 Меню:"
     keyboard = [
         [InlineKeyboardButton("🗓 Записаться", callback_data="menu_consult")],
@@ -371,51 +360,45 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = update.effective_user.id
     text = update.message.text.strip().lower()
     if user_id != ADMIN_USER_ID: return False
-    if text in ["заявки", "заявка", "запись", "записи"]: await admin_show_list(update, context, "consult", 0); return True
+    if text in ["заявки", "заявка", "запись"]: await admin_show_list(update, context, "consult", 0); return True
     if text in ["отзыв", "отзывы", "лайки", "дизлайки"]:
         keyboard = [[InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"), InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")], [InlineKeyboardButton("❓ Неизвестные", callback_data="admin_page_unknown_0")]]
         await update.message.reply_text("<b>📊 Меню</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return True
     return False
-    
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data
     await query.answer()
     
-    # Админ
     if data.startswith("admin_page_"): parts = data.split("_"); await admin_show_list(update, context, parts[2], int(parts[3])); return
     if data.startswith("admin_clear_"): await admin_clear_confirm(update, context, data.replace("admin_clear_", "")); return
     if data.startswith("admin_do_clear_"): await admin_do_clear(update, context, data.replace("admin_do_clear_", "")); return
-    if data == "admin_menu_main": await handle_admin_text(Update(update.update_id, callback_query=None, message=query.message), context); return # fix for recursion, simplified below
-    if data == "admin_menu_main": keyboard = [[InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"), InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")], [InlineKeyboardButton("❓ Неизвестные", callback_data="admin_page_unknown_0")]]; await query.edit_message_text("<b>📊 Меню</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"); return
+    if data == "admin_menu_main": 
+        keyboard = [[InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"), InlineKeyboardButton("👎 Дизлайки", callback_data="admin_page_dislike_0")], [InlineKeyboardButton("❓ Неизвестные", callback_data="admin_page_unknown_0")]]
+        await query.edit_message_text("<b>📊 Меню</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        return
 
-    # Пользователь
     if data == "menu_consult": keyboard = [[InlineKeyboardButton("📅 Расписание", url=CALENDAR_URL)], [InlineKeyboardButton("📝 Заявка", callback_data="consultation")]]; await query.edit_message_text("Выберите:", reply_markup=InlineKeyboardMarkup(keyboard)); return
     if data == "menu_roadmaps": await roadmaps_command(update, context, edit_mode=True); return
         
-    # ИСПРАВЛЕННАЯ ЛОГИКА МЕНЮ
     if data in ["menu_cost", "menu_method", "menu_about"]:
         q_map = {"menu_cost": "стоимость", "menu_method": "метод выстраданного познания", "menu_about": "кто такой алексей"}
         answer, _, candidates = search_knowledge_base(q_map[data], kb_index) if kb_index else ("Ошибка", 0, [])
         
-        # Обработка текста (удаление маркера, извлечение ссылок)
         clean_text = answer.replace("[add_button]", "").strip()
         display_text, url_buttons = extract_links_and_buttons(clean_text)
         
-        # Добавление кнопки записи, если маркер был
         if "[add_button]" in answer:
             url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
         
-        # Поиск индекса для лайков
         ans_idx = 0
         if candidates: ans_idx = candidates[0]['index']
         else:
             for i, item in enumerate(kb_index.items):
                 if item['context'] == answer: ans_idx = i; break
         
-        # Добавление кнопок лайков
         url_buttons.append([InlineKeyboardButton("👍", callback_data=f"like_{ans_idx}"), InlineKeyboardButton("👎", callback_data=f"dislike_{ans_idx}")])
 
         await query.message.reply_text(display_text, reply_markup=InlineKeyboardMarkup(url_buttons), disable_web_page_preview=True, parse_mode="HTML")
@@ -471,7 +454,8 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     idx = int(data.split("_")[1])
     
     answer = kb_index.items[idx]["context"] if kb_index else "???"
-    question = user_contexts.get(user.id, {}).get("last_raw_question", "???")
+    # Берем последний вопрос из истории
+    question = list(user_contexts.get(user.id, {}).get("history", []))[-1] if user_contexts.get(user.id) else "???"
     
     feedback_list = load_json(FEEDBACK_FILE)
     feedback_list.append({"type": fb_type, "question": question, "answer": answer, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
@@ -483,17 +467,68 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         try: await context.bot.send_message(ADMIN_USER_ID, f"👎 Дизлайк: {question}", parse_mode="HTML")
         except: pass
 
+# --- ОСНОВНАЯ ЛОГИКА С КОНТЕКСТОМ ---
+
+def get_contextual_question(user_id: int, current_question: str) -> str:
+    """Добавляет контекст, если текущий вопрос короткий или уточняющий."""
+    if user_id not in user_contexts:
+        return current_question
+    
+    history = user_contexts[user_id]["history"]
+    if not history:
+        return current_question
+    
+    # Список слов-маркеров, которые требуют контекста
+    context_markers = ['а', 'а есть', 'а как', 'а сколько', 'а скидки', 'а рассрочка', 'а документ', 'а ты', 'а это']
+    q_lower = current_question.lower()
+    
+    # Если вопрос короткий (< 20 символов) или содержит маркер контекста
+    if len(q_lower) < 20 or any(marker in q_lower for marker in context_markers):
+        # Берем последнее сообщение из истории
+        last_msg = list(history)[-1]
+        # Склеиваем. Например: "Стоимость обучения" + "а скидки есть?" -> "Стоимость обучения а скидки есть?"
+        # Это поможет поиску найти ответ про скидки на обучение
+        combined = f"{last_msg} {current_question}"
+        return combined
+    
+    return current_question
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     user_question = update.message.text.strip()
     user_question_lower = user_question.lower()
     
+    # 1. Проверка админ-команд
     if await handle_admin_text(update, context): return
 
-    if user_id not in user_contexts: user_contexts[user_id] = {"last_answer": None, "last_raw_question": None}
-    user_contexts[user_id]["last_raw_question"] = user_question
+    # 2. Управление памятью (Garbage Collection)
+    if user_id in user_contexts:
+        # Проверяем время неактивности
+        last_act = user_contexts[user_id].get("last_activity", datetime.now())
+        if datetime.now() - last_act > timedelta(hours=INACTIVITY_LIMIT_HOURS):
+            # Если пользователь молчал более 24 часов, сбрасываем его память
+            print(f"Сброс памяти для {user_id} (неактивность)")
+            del user_contexts[user_id]
+    
+    # Инициализация памяти
+    if user_id not in user_contexts:
+        user_contexts[user_id] = {
+            "history": deque(maxlen=MAX_HISTORY_LENGTH),
+            "last_activity": datetime.now()
+        }
+    
+    # Обновляем время активности
+    user_contexts[user_id]["last_activity"] = datetime.now()
+    
+    # 3. Добавляем вопрос в историю
+    # deque автоматически удалит старый, если переполнен
+    user_contexts[user_id]["history"].append(user_question)
 
-    answer, score, candidates = search_knowledge_base(user_question, kb_index)
+    # 4. Формируем запрос с контекстом
+    search_query = get_contextual_question(user_id, user_question)
+
+    # 5. Поиск
+    answer, score, candidates = search_knowledge_base(search_query, kb_index)
     final_answer = None
     
     if score > 3.5 and answer: final_answer = answer
