@@ -13,7 +13,6 @@ from datetime import datetime
 # Загрузка переменных окружения
 load_dotenv()
 
-# Легковесные зависимости для обработки русского языка
 import pymorphy2
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -23,15 +22,15 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 # --- КОНСТАНТЫ ---
-ADMIN_USER_ID = 1373472999
+ADMIN_USER_ID = 1373472999  # Ваш ID для получения уведомлений
 CONSULTATIONS_FILE = "consultations.json"
 CALENDAR_URL = "https://calendar.app.google/ThpteAc5uqhxqnUA9"
 SITE_URL = "https://avick23.github.io/Business-card/"
 
-# Инициализация морфологического анализатора для русского языка
+# Инициализация морфологического анализатора
 morph = pymorphy2.MorphAnalyzer()
 
-# Расширенный список стоп-слов для русского языка
+# Расширенный список стоп-слов
 RUSSIAN_STOPWORDS = {
     'и', 'в', 'во', 'не', 'что', 'он', 'на', 'я', 'с', 'со', 'как', 'а', 'то',
     'все', 'она', 'так', 'его', 'но', 'да', 'ты', 'к', 'у', 'же', 'вы', 'за',
@@ -54,7 +53,7 @@ RUSSIAN_STOPWORDS = {
     'чтоб', 'зато', 'итак', 'также', 'тоже'
 }
 
-# Словарь синонимов для улучшения поиска
+# Словарь синонимов
 SYNONYMS = {
     'стоимость': ['цена', 'тариф', 'плата', 'расценка', 'сколько стоит'],
     'курс': ['обучение', 'программа', 'тренинг'],
@@ -84,24 +83,20 @@ SYNONYMS = {
     'roadmap': ['дорожная карта', 'карта развития', 'план']
 }
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ NLP ---
 
 def preprocess_question(question: str) -> str:
-    """Удаляет вводные конструкции из вопроса"""
     patterns = [
         r'^а если\s+', r'^что если\s+', r'^что будет если\s+',
         r'^можно ли\s+', r'^а что если\s+', r'^если я\s+',
         r'^а\s+', r'^ну\s+', r'^скажи\s+', r'^расскажи\s+', r'^объясни\s+'
     ]
-    
     cleaned = question.lower()
     for pattern in patterns:
         cleaned = re.sub(pattern, '', cleaned)
-    
     return cleaned.strip()
 
 def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
-    """Расширение набора ключевых слов синонимами"""
     expanded = set(keywords)
     for word in keywords:
         for base, synonyms in SYNONYMS.items():
@@ -110,61 +105,45 @@ def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
     return expanded
 
 def load_knowledge_base(file_path: str) -> list:
-    """Загрузка базы знаний из JSON-файла"""
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Файл базы знаний не найден: {file_path}")
-    
     with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def preprocess_text(text: str) -> str:
-    """Очистка текста от специальных символов"""
     text = re.sub(r'https?://\S+|www\.\S+', '', text)
     text = re.sub(r'\S+@\S+', '', text)
     return re.sub(r'[^\w\s]', ' ', text.lower().strip())
 
 def lemmatize_word(word: str) -> str:
-    """Лемматизация одного слова для русского языка с кэшированием"""
     if not hasattr(lemmatize_word, 'cache'):
         lemmatize_word.cache = {}
-    
     if word in lemmatize_word.cache:
         return lemmatize_word.cache[word]
-    
     parsed = morph.parse(word)[0]
     lemma = parsed.normal_form
     lemmatize_word.cache[word] = lemma
     return lemma
 
 def lemmatize_sentence(text: str) -> str:
-    """Лемматизация всего предложения"""
     text = re.sub(r'[?!.]', '', text)
     words = preprocess_text(text).split()
     lemmas = [lemmatize_word(word) for word in words if not is_stop_word(word) and len(word) > 2]
     return " ".join(lemmas)
 
 def is_stop_word(word: str) -> bool:
-    """Проверка, является ли слово стоп-словом"""
     return word.lower() in RUSSIAN_STOPWORDS
 
 def extract_keywords(text: str, use_synonyms: bool = True) -> set:
-    """Извлечение ключевых слов с лемматизацией"""
     cleaned_text = preprocess_text(text)
     words = cleaned_text.split()
-    
-    keywords = {
-        lemmatize_word(word) for word in words
-        if len(word) > 2 and not is_stop_word(word)
-    }
-    
+    keywords = {lemmatize_word(word) for word in words if len(word) > 2 and not is_stop_word(word)}
     if use_synonyms:
         keywords = expand_with_synonyms(keywords)
-    
     return keywords
 
 def extract_entities(text: str) -> dict:
-    """Простое извлечение сущностей (числа, даты, имена)"""
     entities = {
         'numbers': re.findall(r'\d+', text),
         'money': re.findall(r'\d+\s*(?:руб|р|рублей|долларов|usd|eur)', text, re.IGNORECASE),
@@ -174,13 +153,11 @@ def extract_entities(text: str) -> dict:
 
 def calculate_keyword_match_score(user_keywords: Set[str], item_keywords: Set[str], 
                                  user_question: str, original_keywords: List[str]) -> float:
-    """Расчет оценки совпадения по ключевым словам с комплексным подходом"""
     common_keywords = user_keywords.intersection(item_keywords)
     base_score = len(common_keywords) * 2
     
     question_lower = preprocess_text(user_question)
     phrase_bonus = 0
-    
     for orig_keyword in original_keywords:
         keyword_lower = preprocess_text(orig_keyword)
         if keyword_lower in question_lower:
@@ -195,14 +172,9 @@ def calculate_keyword_match_score(user_keywords: Set[str], item_keywords: Set[st
     if question_numbers and keyword_numbers and question_numbers.intersection(keyword_numbers):
         context_bonus += 5
     
-    total_score = base_score + phrase_bonus + context_bonus
-    return total_score
+    return base_score + phrase_bonus + context_bonus
 
 def extract_links_and_buttons(text: str) -> Tuple[str, List[List[InlineKeyboardButton]]]:
-    """
-    Находит ссылки в тексте, создает из них кнопки и удаляет их из текста.
-    Возвращает очищенный текст и список кнопок.
-    """
     buttons = []
     url_pattern = r'(https?://[^\s<]+|www\.[^\s<]+)'
     urls = re.findall(url_pattern, text)
@@ -216,20 +188,17 @@ def extract_links_and_buttons(text: str) -> Tuple[str, List[List[InlineKeyboardB
                 label = "🌐 Сайт Алексея"
             elif "t.me" in url:
                 label = "💬 Telegram"
-            
             buttons.append([InlineKeyboardButton(label, url=url)])
         
         clean_text = re.sub(url_pattern, '', text).strip()
         clean_text = re.sub(r'\s+\.', '.', clean_text)
         clean_text = re.sub(r'\(\s*\)', '', clean_text).strip()
         return clean_text, buttons
-    
     return text, []
 
 # --- КЛАСС ИНДЕКСА БАЗЫ ЗНАНИЙ ---
 
 class KBIndex:
-    """Класс для индексации и поиска по базе знаний"""
     def __init__(self):
         self.items = []
         self.contexts = []
@@ -240,12 +209,10 @@ class KBIndex:
         self.last_update = 0
     
     def build_tfidf_index(self, contexts: List[str]):
-        """Построение TF-IDF индекса для полнотекстового поиска"""
         self.tfidf_vectorizer = TfidfVectorizer(
             lowercase=True, stop_words=list(RUSSIAN_STOPWORDS),
             ngram_range=(1, 3), max_features=3000
         )
-        
         lemmatized_contexts = [lemmatize_sentence(ctx) for ctx in contexts]
         self.tfidf_labeled_matrix = self.tfidf_vectorizer.fit_transform(lemmatized_contexts)
         
@@ -256,23 +223,17 @@ class KBIndex:
         self.tfidf_raw_matrix = self.raw_tfidf_vectorizer.fit_transform(contexts)
     
     def keyword_search(self, user_question: str, top_k: int = 3) -> List[dict]:
-        """Поиск по ключевым словам с ранжированием"""
         user_keywords = extract_keywords(user_question)
         if not user_keywords: return []
-        
         scored_items = []
         for idx, item in enumerate(self.items):
-            score = calculate_keyword_match_score(
-                user_keywords, item["keywords"], user_question, item["original_keywords"]
-            )
+            score = calculate_keyword_match_score(user_keywords, item["keywords"], user_question, item["original_keywords"])
             if score > 0:
                 scored_items.append({"context": item["context"], "score": score, "index": idx})
-        
         scored_items.sort(key=lambda x: x["score"], reverse=True)
         return scored_items[:top_k]
     
     def fulltext_search(self, query: str, top_k: int = 3) -> List[dict]:
-        """Полнотекстовый поиск с использованием TF-IDF"""
         if self.tfidf_vectorizer is None or self.tfidf_labeled_matrix is None: return []
         results = []
         try:
@@ -291,14 +252,12 @@ class KBIndex:
                 if score > 0.15:
                     results.append({"context": self.contexts[idx], "score": float(score), "index": int(idx)})
         except Exception as e:
-            print(f"Ошибка при полнотекстовом поиске: {e}")
+            print(f"Ошибка TF-IDF: {e}")
         return results
 
 def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
-    """Предобработка базы знаний с использованием класса индексации"""
     kb_index = KBIndex()
     processed_items = []
-    
     contexts = [item["context"] for item in knowledge_base]
     
     for i, item in enumerate(knowledge_base):
@@ -322,7 +281,6 @@ def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
     return kb_index
 
 def find_best_match(user_question: str, kb_index: KBIndex) -> str:
-    """Улучшенный гибридный поиск лучшего совпадения в базе знаний"""
     cleaned_question = preprocess_question(user_question)
     
     keyword_results = kb_index.keyword_search(cleaned_question, top_k=5)
@@ -368,7 +326,6 @@ user_contexts = {}
 # --- ОБРАБОТЧИКИ TELEGRAM ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик команды /start с клавиатурой"""
     welcome_message = (
         "👋 Привет! Я Алексей, ваш цифровой помощник по обучению.\n\n"
         "Я знаю всё о моих методиках, дорожных картах и программе обучения.\n\n"
@@ -385,7 +342,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
 async def roadmaps_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Быстрый доступ ко всем дорожным картам"""
     keyboard = [
         [InlineKeyboardButton("🐍 Python Roadmap", url="https://avick23.github.io/roadmap_python/")],
         [InlineKeyboardButton("⚡ Backend Roadmap", url="https://avick23.github.io/roadmap_backend/")],
@@ -418,6 +374,7 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
         "timestamp": timestamp
     }
     
+    # 1. СТАРАЯ ЛОГИКА: Сохраняем заявку в файл
     consultations = []
     if os.path.exists(CONSULTATIONS_FILE):
         with open(CONSULTATIONS_FILE, "r", encoding="utf-8") as f:
@@ -431,6 +388,31 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     with open(CONSULTATIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(consultations, f, ensure_ascii=False, indent=4)
     
+    # 2. НОВАЯ ЛОГИКА: Отправляем уведомление админу
+    try:
+        admin_msg_text = (
+            f"🔔 <b>Новая заявка!</b>\n\n"
+            f"👤 <b>Имя:</b> {user.first_name or ''} {user.last_name or ''}\n"
+            f"🆔 <b>Username:</b> @{user.username if user.username else 'не указан'}\n"
+            f"⏰ <b>Время:</b> {timestamp}\n"
+            f"🆔 <b>ID:</b> <code>{user.id}</code>"
+        )
+        
+        # Добавляем кнопку для быстрой связи
+        admin_keyboard = []
+        if user.username:
+            admin_keyboard.append([InlineKeyboardButton("💬 Написать пользователю", url=f"tg://resolve?domain={user.username}")])
+        
+        await context.bot.send_message(
+            chat_id=ADMIN_USER_ID, 
+            text=admin_msg_text, 
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(admin_keyboard) if admin_keyboard else None
+        )
+    except Exception as e:
+        print(f"❌ Ошибка отправки уведомления админу: {e}")
+    
+    # 3. Отвечаем пользователю
     keyboard = [
         [InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)],
         [InlineKeyboardButton("📱 Написать в Telegram", url="https://t.me/AVick23")]
@@ -448,7 +430,6 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 async def clear_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик нажатия кнопки очистки списка заявок"""
     query = update.callback_query
     await query.answer()
     
@@ -458,11 +439,10 @@ async def clear_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(text="✅ Список заявок успешно очищен!")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик текстовых сообщений"""
     user_id = update.effective_user.id
     user_question = update.message.text.strip().lower()
     
-    # 1. Админ-команда для просмотра заявок
+    # Админ-команда для просмотра заявок
     if user_id == ADMIN_USER_ID and user_question == "заявки":
         if not os.path.exists(CONSULTATIONS_FILE) or os.path.getsize(CONSULTATIONS_FILE) == 0:
             await update.message.reply_text("📋 Список заявок пуст.")
@@ -495,21 +475,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(message, reply_markup=reply_markup)
         return
     
-    # 2. Инициализация контекста для нового пользователя
     if user_id not in user_contexts:
         user_contexts[user_id] = {"last_answer": None}
     
-    # 3. Обработка коротких ответов (контекст)
     short_answers = ['да', 'конечно', 'ага', 'угу', 'еще', 'больше', 'расскажи подробнее', 'как?', 'почему?']
     if user_question in short_answers:
         last_answer = user_contexts[user_id].get("last_answer")
         if last_answer:
-            # Повторяем ответ, но с кнопками консультации (если маркер остался в памяти, но обычно мы его чистим)
-            # Для простоты просто шлем текст.
             await update.message.reply_text(last_answer)
             return
     
-    # 4. Обработка кнопок Главного меню
     if "записаться" in user_question and "консультаци" in user_question:
         keyboard = [
             [InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)],
@@ -524,10 +499,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await roadmaps_command(update, context)
         return
 
-    # 5. Переменная для ответа
     answer = None
     
-    # Поиск по базе знаний или хардкод для конкретных кнопок
     if "стоимость" in user_question or "цена" in user_question:
         answer = find_best_match("стоимость обучения", kb_index)
     elif "о методе" in user_question:
@@ -535,27 +508,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif "о преподавателе" in user_question:
         answer = find_best_match("кто такой алексей", kb_index)
     else:
-        # Стандартный поиск
         answer = find_best_match(update.message.text, kb_index)
 
-    # 6. Обработка и отправка ответа
     if not answer:
         answer = "К сожалению, я не нашел ответа. Попробуйте переформулировать вопрос."
 
-    # Сохранение контекста (без маркера [add_button], чтобы не спамить кнопкой при "расскажи еще")
     clean_answer_for_memory = answer.replace("[add_button]", "").strip()
     user_contexts[user_id]["last_answer"] = clean_answer_for_memory
     
-    # Извлечение ссылок и создание кнопок
     display_text, url_buttons = extract_links_and_buttons(clean_answer_for_memory)
 
-    # Проверяем маркер для добавления кнопки консультации
     if "[add_button]" in answer:
         url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
     
     reply_markup = InlineKeyboardMarkup(url_buttons) if url_buttons else None
     
-    # Отправка
     if reply_markup:
         await update.message.reply_text(
             display_text, 
@@ -567,7 +534,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(display_text)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка ошибок"""
     print(f"Произошла ошибка: {context.error}")
     if update and hasattr(update, 'message'):
         await update.message.reply_text(
@@ -578,25 +544,22 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # --- ЗАПУСК ---
 
 def main() -> None:
-    """Основная функция запуска бота"""
     global kb_index
     
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise ValueError("Токен бота не найден в .env файле. Укажите BOT_TOKEN=ваш_токен")
     
-    # Загрузка базы знаний
     try:
         kb = load_knowledge_base('main.json')
         kb_index = preprocess_knowledge_base(kb)
-        print("✅ База знаний успешно загружена и обработана")
+        print("✅ База знаний успешно загружена")
     except Exception as e:
         print(f"❌ Ошибка при загрузке базы знаний: {str(e)}")
         raise
     
     application = Application.builder().token(token).build()
     
-    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("roadmaps", roadmaps_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
