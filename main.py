@@ -25,7 +25,7 @@ try:
     FUZZY_ENABLED = True
 except ImportError:
     FUZZY_ENABLED = False
-    print("⚠️ Библиотека thefuzz не установлена. Поиск опечаток отключен.")
+    print("⚠️ Библиотека thefuzz не установлена. Поиск опечаток отключен. pip install thefuzz")
 
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
@@ -39,7 +39,7 @@ SITE_URL = "https://avick23.github.io/Business-card/"
 
 morph = pymorphy2.MorphAnalyzer()
 
-# Стоп-слова и синонимы (оставлены без изменений)
+# Стоп-слова
 RUSSIAN_STOPWORDS = {
     'и', 'в', 'во', 'не', 'что', 'он', 'на', 'я', 'с', 'со', 'как', 'а', 'то',
     'все', 'она', 'так', 'его', 'но', 'да', 'ты', 'к', 'у', 'же', 'вы', 'за',
@@ -62,6 +62,7 @@ RUSSIAN_STOPWORDS = {
     'чтоб', 'зато', 'итак', 'также', 'тоже'
 }
 
+# Синонимы
 SYNONYMS = {
     'стоимость': ['цена', 'тариф', 'плата', 'расценка', 'сколько стоит'],
     'курс': ['обучение', 'программа', 'тренинг'],
@@ -206,7 +207,7 @@ class KBIndex:
         self.tfidf_labeled_matrix = None
         self.raw_tfidf_vectorizer = None
         self.tfidf_raw_matrix = None
-        self.all_keywords_list = [] # Для нечеткого поиска
+        self.all_keywords_list = [] 
         self.last_update = 0
     
     def build_tfidf_index(self, contexts: List[str]):
@@ -223,7 +224,6 @@ class KBIndex:
         )
         self.tfidf_raw_matrix = self.raw_tfidf_vectorizer.fit_transform(contexts)
         
-        # Собираем все ключевые слова для Fuzzy поиска
         all_kw = set()
         for item in self.items:
             all_kw.update(item["original_keywords"])
@@ -290,7 +290,6 @@ def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
 def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Optional[str], float, List[dict]]:
     """
     Возвращает: (лучший ответ, оценка, список кандидатов)
-    Оценка используется для логики уточнения.
     """
     cleaned_question = preprocess_question(user_question)
     
@@ -315,10 +314,8 @@ def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Option
     if combined_results:
         sorted_results = sorted(combined_results.items(), key=lambda x: x[1], reverse=True)
         
-        # Формируем список кандидатов (нужно для уточнения)
         candidates = []
         for idx, score in sorted_results[:3]:
-             # Берем первое ключевое слово как "тему" для кнопки
             topic_name = kb_index.items[idx]["original_keywords"][0] if kb_index.items[idx]["original_keywords"] else "Тема"
             candidates.append({
                 "index": idx,
@@ -329,11 +326,8 @@ def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Option
             
         best_idx, best_score = sorted_results[0]
         
-        # Если оценка очень высокая - отвечаем сразу
         if best_score > 3.5:
             return kb_index.items[best_idx]["context"], best_score, candidates
-            
-        # Если средняя - возможно понадобится уточнение
         if best_score > 1.0:
              return kb_index.items[best_idx]["context"], best_score, candidates
     
@@ -342,8 +336,6 @@ def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Option
 def get_fuzzy_suggestion(question: str, kb_index: KBIndex) -> Optional[str]:
     if not FUZZY_ENABLED or not kb_index.all_keywords_list:
         return None
-        
-    # Ищем совпадение с порогом 70%
     best_match, score = process.extractOne(question, kb_index.all_keywords_list)
     if score > 70:
         return best_match
@@ -353,10 +345,9 @@ def get_fuzzy_suggestion(question: str, kb_index: KBIndex) -> Optional[str]:
 kb_index = None
 user_contexts = {}
 
-# --- ФУНКЦИЯ ЛОГИРОВАНИЯ ---
+# --- ЛОГИРОВАНИЕ И УТИЛИТЫ ---
 
 def log_unknown_question(question: str):
-    """Сохраняет вопросы, на которые бот не нашел ответа"""
     data = []
     if os.path.exists(UNKNOWN_FILE):
         try:
@@ -376,7 +367,6 @@ def log_unknown_question(question: str):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    # Сохраняем пользователя, если его нет
     if user_id not in user_contexts:
         user_contexts[user_id] = {"last_answer": None, "last_raw_question": None}
 
@@ -386,7 +376,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "💡 Выберите действие или задайте вопрос текстом:"
     )
     
-    # Главное меню (Inline кнопки)
     keyboard = [
         [InlineKeyboardButton("🗓 Записаться на консультацию", callback_data="menu_consult")],
         [InlineKeyboardButton("💰 Стоимость обучения", callback_data="menu_cost")],
@@ -398,15 +387,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
-# --- ОБРАБОТЧИК INLINE КНОПОК (Menu & Feedback & Clarify) ---
-
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     
     data = query.data
     
-    # Обработка главного меню
     if data == "menu_consult":
         keyboard = [
             [InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)],
@@ -419,36 +405,35 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await roadmaps_command(update, context, edit_mode=True)
         return
         
+    # ИСПРАВЛЕНО: Используем search_knowledge_base вместо find_best_match
     if data == "menu_cost":
-        answer = find_best_match("стоимость обучения", kb_index) if kb_index else "База знаний недоступна"
-        # Отправляем как новое сообщение, так как это выбор из меню
+        answer, _, _ = search_knowledge_base("стоимость обучения", kb_index) if kb_index else ("База знаний недоступна", 0, [])
         await query.message.reply_text(answer)
         return
 
     if data == "menu_method":
-        answer = find_best_match("метод выстраданного познания", kb_index) if kb_index else "База знаний недоступна"
+        answer, _, _ = search_knowledge_base("метод выстраданного познания", kb_index) if kb_index else ("База знаний недоступна", 0, [])
         await query.message.reply_text(answer)
         return
         
     if data == "menu_about":
-        answer = find_best_match("кто такой алексей", kb_index) if kb_index else "База знаний недоступна"
+        answer, _, _ = search_knowledge_base("кто такой алексей", kb_index) if kb_index else ("База знаний недоступна", 0, [])
         await query.message.reply_text(answer)
         return
 
-    # Обработка уточнения (Clarification)
     if data.startswith("clarify_"):
+        if data == "clarify_none":
+             await query.edit_message_text("Хорошо, попробуйте сформулировать вопрос иначе или используйте меню.")
+             return
+
         idx = int(data.split("_")[1])
         context_data = kb_index.items[idx]["context"]
-        # Убираем маркер добавления кнопки записи, если он есть в контексте
         clean_text = context_data.replace("[add_button]", "").strip()
         
-        # Добавляем кнопки ссылок и лайки
         display_text, url_buttons = extract_links_and_buttons(clean_text)
-        # Добавляем кнопку записи
         if "[add_button]" in context_data:
             url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
         
-        # Добавляем feedback
         url_buttons.append([
             InlineKeyboardButton("👍", callback_data=f"like_{idx}"),
             InlineKeyboardButton("👎", callback_data=f"dislike_{idx}")
@@ -457,12 +442,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text(display_text, reply_markup=InlineKeyboardMarkup(url_buttons), parse_mode="HTML", disable_web_page_preview=True)
         return
 
-    # Обработка записи
     if data == "consultation":
         await consultation_callback(update, context)
         return
 
-    # Обработка лайков/дизлайков
     if data.startswith("like_") or data.startswith("dislike_"):
         await feedback_callback(update, context)
         return
@@ -499,7 +482,6 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
         "timestamp": timestamp
     }
     
-    # Сохранение заявки
     consultations = []
     if os.path.exists(CONSULTATIONS_FILE):
         try: consultations = json.load(open(CONSULTATIONS_FILE, "r", encoding="utf-8"))
@@ -507,7 +489,6 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     consultations.append(user_data)
     json.dump(consultations, open(CONSULTATIONS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=4)
     
-    # Уведомление админа
     try:
         admin_msg = (f"🔔 <b>Новая заявка!</b>\n\n👤 <b>Имя:</b> {user.first_name or ''} {user.last_name or ''}\n"
                      f"🆔 <b>Username:</b> @{user.username if user.username else 'не указан'}\n"
@@ -519,7 +500,6 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         print(f"Ошибка уведомления админа: {e}")
     
-    # Ответ пользователю
     keyboard = [
         [InlineKeyboardButton("📅 Перейти к расписанию", url=CALENDAR_URL)],
         [InlineKeyboardButton("📱 Написать в Telegram", url="https://t.me/AVick23")]
@@ -533,14 +513,11 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     data = query.data
     user = query.from_user
     
-    # Если это дизлайк, логируем и уведомляем админа
     if "dislike" in data:
         idx = int(data.split("_")[1])
-        # Получаем контекст ответа
         bad_context = kb_index.items[idx]["context"] if kb_index else "Неизвестный ответ"
         original_question = user_contexts.get(user.id, {}).get("last_raw_question", "Неизвестный вопрос")
         
-        # Уведомление админу
         try:
             msg = (f"👎 <b>Плохой ответ!</b>\n\n"
                    f"❓ <b>Вопрос:</b> {original_question}\n"
@@ -548,7 +525,6 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await context.bot.send_message(ADMIN_USER_ID, msg, parse_mode="HTML")
         except: pass
         
-        # Сохраняем в файл
         fb_data = []
         if os.path.exists(FEEDBACK_FILE):
             try: fb_data = json.load(open(FEEDBACK_FILE, "r", encoding="utf-8"))
@@ -556,48 +532,36 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         fb_data.append({"question": original_question, "bad_answer": bad_context, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
         json.dump(fb_data, open(FEEDBACK_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=4)
         
-        await query.edit_message_reply_markup(None) # Убираем кнопки
+        await query.edit_message_reply_markup(None)
         await query.message.reply_text("Спасибо за обратную связь! Я учту это для улучшения ответов.")
     
     elif "like" in data:
         await query.edit_message_reply_markup(None)
-        # Можно просто убрать кнопки или ответить тихо
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     user_question = update.message.text.strip()
     user_question_lower = user_question.lower()
     
-    # Инициализация контекста
     if user_id not in user_contexts:
         user_contexts[user_id] = {"last_answer": None, "last_raw_question": None}
     
-    # Админ-команда
     if user_id == ADMIN_USER_ID and user_question_lower == "заявки":
-        # Логика просмотра заявок (упрощенно, без изменений)
         if not os.path.exists(CONSULTATIONS_FILE):
             await update.message.reply_text("📋 Список заявок пуст.")
             return
-        # ... (код просмотра заявок можно оставить старый или упростить для краткости)
         await update.message.reply_text("📋 Проверьте файл consultations.json на сервере.")
         return
 
-    # Контекст: сохраняем текущий вопрос
     user_contexts[user_id]["last_raw_question"] = user_question
 
-    # 1. Пробуем стандартный поиск
     answer, score, candidates = search_knowledge_base(user_question, kb_index)
     
-    # 2. Логика ответа
     final_answer = None
-    candidates_keyboard = []
     
-    # А. Уверенный ответ
     if score > 3.5 and answer:
         final_answer = answer
-    # Б. Средняя уверенность -> Уточнение
     elif score > 1.5 and candidates:
-        # Предлагаем уточнить
         keyboard = []
         for cand in candidates:
             keyboard.append([InlineKeyboardButton(f"Ты про: {cand['topic']}?", callback_data=f"clarify_{cand['index']}")])
@@ -608,22 +572,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
-    # В. Низкая уверенность -> Пробуем Fuzzy Search
     elif FUZZY_ENABLED:
         suggestion = get_fuzzy_suggestion(user_question, kb_index)
         if suggestion:
-            # Нашли опечатку -> перезапускаем поиск
             answer, score, candidates = search_knowledge_base(suggestion, kb_index)
             if score > 1.5:
                 final_answer = answer
-                # Если все равно средне, можно снова уточнить, но пока просто ответим
-                # Или предложим один вариант
                 if score < 3.5 and candidates:
                     keyboard = [[InlineKeyboardButton(f"Может вы имели в виду: {suggestion}?", callback_data=f"clarify_{candidates[0]['index']}")]]
                     await update.message.reply_text("Возможно, вы опечатались?", reply_markup=InlineKeyboardMarkup(keyboard))
                     return
 
-    # Г. Ничего не нашли -> Логирование
     if not final_answer:
         log_unknown_question(user_question)
         await update.message.reply_text(
@@ -633,24 +592,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # Отправка финального ответа
-    # Очистка от маркеров и извлечение ссылок
     clean_answer_for_memory = final_answer.replace("[add_button]", "").strip()
     user_contexts[user_id]["last_answer"] = clean_answer_for_memory
     
     display_text, url_buttons = extract_links_and_buttons(clean_answer_for_memory)
     
-    # Кнопки действий
     if "[add_button]" in final_answer:
         url_buttons.append([InlineKeyboardButton("📝 Записаться на консультацию", callback_data="consultation")])
     
-    # Кнопки оценки
-    # Нам нужен индекс ответа для лайка. Найдем его.
     ans_idx = 0
     if candidates and candidates[0]['context'] == final_answer:
         ans_idx = candidates[0]['index']
     else:
-        # Найдем индекс перебором (не оптимально, но надежно для фидбека)
         for i, item in enumerate(kb_index.items):
             if item['context'] == final_answer:
                 ans_idx = i
@@ -673,8 +626,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     print(f"Ошибка: {context.error}")
 
-# --- ЗАПУСК ---
-
 def main() -> None:
     global kb_index
     
@@ -692,13 +643,9 @@ def main() -> None:
     
     application = Application.builder().token(token).build()
     
-    # Хендлеры
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("roadmaps", roadmaps_command))
-    
-    # Главный обработчик кнопок (Menu, Consultation, Feedback, Clarification)
     application.add_handler(CallbackQueryHandler(menu_callback))
-    
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
     
