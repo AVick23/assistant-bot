@@ -1,5 +1,6 @@
 # messages.py
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from typing import List  # 👈 Добавьте эту строку
 from config import ADMIN_USER_ID, CALENDAR_URL
 
 
