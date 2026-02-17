@@ -13,7 +13,8 @@ from utils import (
     save_question_for_answer, get_question_for_answer,
     cleanup_inactive_users, extract_links_and_buttons,
     load_json, save_json, user_contexts, initialize_kb,
-    save_message_to_history, get_contextual_question
+    save_message_to_history, get_contextual_question,
+    update_keywords_in_db
 )
 
 # ============================================================
@@ -103,8 +104,11 @@ async def rebuild_keywords_command(update: Update, context: ContextTypes.DEFAULT
     
     try:
         import utils
-        updated_count = utils.update_keywords_in_db(force_regenerate=True)
-        utils.kb_index = utils.initialize_kb()
+        
+        # ✅ ИСПРАВЛЕНО: загружаем данные ПЕРЕД обновлением
+        kb_data = utils.load_json(FILES['kb'])
+        updated_count = utils.update_keywords_in_db(kb_data, force_regenerate=True)
+        utils.kb_index = utils.KBIndex(kb_data)
         
         await update.message.reply_text(
             f"✅ База знаний обновлена!\n\n"

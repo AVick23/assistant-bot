@@ -149,15 +149,21 @@ def auto_generate_keywords(context: str, max_kw: int = None) -> List[str]:
     # 6. Возвращаем максимум keywords
     return list(keywords)[:max_kw]
 
-def update_keywords_in_db(force_regenerate: bool = None) -> int:
+def update_keywords_in_db(kb_data: list, force_regenerate: bool = None) -> int:
     """
     Проверяет и обновляет keywords в main.json при старте.
     ✅ По умолчанию ВСЕГДА перегенерирует ВСЕ keywords
+    
+    Аргументы:
+        kb_data: список данных базы знаний (изменяется in-place)
+        force_regenerate: принудительная перегенерация
+    
+    Возвращает:
+        int: количество обновлённых записей
     """
     if force_regenerate is None:
         force_regenerate = SETTINGS.get('force_regenerate', True)
     
-    kb_data = load_json(FILES['kb'])
     updated_count = 0
     
     for item in kb_data:
@@ -265,11 +271,22 @@ class KBIndex:
 # ИНИЦИАЛИЗАЦИЯ БАЗЫ ЗНАНИЙ
 # ============================================================
 def initialize_kb() -> KBIndex:
-    """Инициализация базы знаний"""
+    """
+    Инициализация базы знаний.
+    ✅ ИСПРАВЛЕНО: теперь правильно загружает данные и обновляет keywords
+    """
     global kb_index  # ✅ КЛЮЧЕВОЕ: обновляем глобальную переменную
     
-    # Сначала авто-обновление keywords
-    kb_data = update_keywords_in_db()
+    # ✅ ИСПРАВЛЕНО: Сначала загружаем данные из файла
+    kb_data = load_json(FILES['kb'])
+    
+    if not kb_data:
+        logger.error("❌ База знаний пуста или файл не найден!")
+        kb_index = KBIndex([])
+        return kb_index
+    
+    # Затем авто-обновление keywords (передаём kb_data, функция изменит его in-place)
+    update_keywords_in_db(kb_data)
     
     # Создание индекса и сохранение в глобалку
     kb_index = KBIndex(kb_data)
