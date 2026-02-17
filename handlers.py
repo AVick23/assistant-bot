@@ -13,12 +13,11 @@ from utils import (
     save_question_for_answer, get_question_for_answer,
     cleanup_inactive_users, extract_links_and_buttons,
     load_json, save_json, user_contexts, initialize_kb,
-    save_message_to_history, get_contextual_question,
-    update_keywords_in_db, KBIndex
+    save_message_to_history, get_contextual_question, KBIndex
 )
 
 # ============================================================
-# КЛАВИАТУРЫ (APPLE STYLE)
+# КЛАВИАТУРЫ
 # ============================================================
 class AppleKeyboards:
     @staticmethod
@@ -94,35 +93,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(AppleStyleMessages.HELP, parse_mode="HTML")
 
-async def rebuild_keywords_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Админ-команда для пересборки keywords"""
-    user_id = update.effective_user.id
-    if user_id != ADMIN_USER_ID:
-        return
-    
-    await update.message.reply_text("🔄 Начинаю перестройку базы знаний...")
-    
-    try:
-        import utils
-        
-        # ✅ Загружаем данные, обновляем, создаём новый индекс
-        kb_data = load_json(FILES['kb'])
-        updated_count = update_keywords_in_db(kb_data, force_regenerate=True)
-        
-        # ✅ Обновляем глобальный индекс через функцию
-        new_index = KBIndex(kb_data)
-        utils._kb_index = new_index  # обновляем приватную переменную
-        
-        await update.message.reply_text(
-            f"✅ База знаний обновлена!\n\n"
-            f"Записей обновлено: {updated_count}\n"
-            f"Индекс перестроен в памяти."
-        )
-        logger.info(f"Admin {user_id} rebuilt keywords. Updated: {updated_count}")
-    except Exception as e:
-        logger.error(f"Rebuild error: {e}")
-        await update.message.reply_text(f"❌ Ошибка при перестройке: {e}")
-
 # ============================================================
 # CALLBACK HANDLER
 # ============================================================
@@ -133,7 +103,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     update_user_activity(user_id)
     
-    # ✅ Получаем индекс через функцию
     kb_index = get_kb_index()
     
     if data == "menu_main":
@@ -348,13 +317,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ctx = get_user_context(user_id)
     update_user_activity(user_id)
     
-    # ✅ Получаем индекс через функцию
     kb_index = get_kb_index()
-    
-    # ✅ Сохраняем вопрос в историю
     save_message_to_history(user_id, user_question, is_user=True)
     
-    # ✅ Поиск с учётом контекста беседы
     search_query = get_contextual_question(user_id, user_question)
     results = kb_index.search(search_query, user_context=ctx)
     
@@ -377,6 +342,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top = results[0]
     min_score = SETTINGS.get('min_bm25_score', 2.5)
     
+    # Если топ результат уверенный ИЛИ это единственный результат
     if top['score'] > min_score or len(results) == 1:
         final_answer = top['context']
         ans_idx = top['index']
@@ -400,6 +366,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             disable_web_page_preview=True
         )
     else:
+        # Если несколько вариантов с близким весом - предлагаем уточнить
         keyboard = []
         for res in results:
             keyboard.append([InlineKeyboardButton(f"💬 {res['topic']}", callback_data=f"clarify_{res['index']}")])

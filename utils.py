@@ -1,11 +1,10 @@
 import json
 import re
-import math
 import os
 import logging
 from typing import List, Dict, Set, Tuple, Optional
 from datetime import datetime, timedelta
-from collections import deque, Counter
+from collections import deque
 from rank_bm25 import BM25Okapi
 import numpy as np
 from config import (
@@ -16,14 +15,13 @@ from config import (
 # ============================================================
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 # ============================================================
-_kb_index = None  # ✅ Приватная переменная
+_kb_index = None
 user_contexts: Dict[int, dict] = {}
 
 # ============================================================
-# ГЕТТЕР ДЛЯ KB_INDEX (решает проблему с None)
+# ГЕТТЕР ДЛЯ KB_INDEX
 # ============================================================
 def get_kb_index() -> 'KBIndex':
-    """Возвращает текущий индекс базы знаний"""
     return _kb_index
 
 # ============================================================
@@ -76,8 +74,8 @@ def lemmatize_sentence(text: str) -> str:
     lemmas = [lemmatize_word(w) for w in words if w not in RUSSIAN_STOPWORDS and len(w) > 2]
     return " ".join(lemmas)
 
-def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
-    """Расширение синонимами"""
+def expand_query_with_synonyms(keywords: Set[str]) -> Set[str]:
+    """Расширение запроса пользователя синонимами"""
     expanded = set(keywords)
     for word in keywords:
         for base, syns in SYNONYMS.items():
@@ -85,102 +83,6 @@ def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
                 expanded.add(base)
                 expanded.update(syns)
     return expanded
-
-# ============================================================
-# АВТО-ГЕНЕРАЦИЯ KEYWORDS
-# ============================================================
-def auto_generate_keywords(context: str, max_kw: int = None) -> List[str]:
-    """
-    Автоматически извлекает ключевые слова из текста.
-    """
-    if max_kw is None:
-        max_kw = SETTINGS.get('max_keywords', 30)
-    
-    keywords = set()
-    
-    # 1. Берем первые 3 предложения (суть)
-    sentences = re.split(r'[.!?]', context)[:3]
-    important_text = ' '.join(sentences)
-    words = preprocess_text(important_text).split()
-    
-    for word in words:
-        if len(word) > 2 and word not in RUSSIAN_STOPWORDS:
-            try:
-                parsed = morph.parse(word)[0]
-                if any(tag in parsed.tag for tag in ['NOUN', 'ADJF', 'INFN', 'VERB']):
-                    keywords.add(parsed.normal_form)
-            except:
-                keywords.add(word)
-    
-    # 2. Добавляем слова из ВСЕГО контекста
-    full_words = preprocess_text(context).split()
-    for word in full_words:
-        if len(word) > 2 and word not in RUSSIAN_STOPWORDS:
-            try:
-                parsed = morph.parse(word)[0]
-                if any(tag in parsed.tag for tag in ['NOUN', 'ADJF', 'INFN', 'VERB']):
-                    keywords.add(parsed.normal_form)
-            except:
-                keywords.add(word)
-    
-    # 3. Добавляем фразы (2-3 слова)
-    word_list = preprocess_text(context).split()
-    for i in range(len(word_list) - 1):
-        phrase_2 = f"{word_list[i]} {word_list[i+1]}"
-        if len(phrase_2) > 5:
-            keywords.add(phrase_2)
-    
-    for i in range(len(word_list) - 2):
-        phrase_3 = f"{word_list[i]} {word_list[i+1]} {word_list[i+2]}"
-        if len(phrase_3) > 8:
-            keywords.add(phrase_3)
-    
-    # 4. Расширяем синонимами
-    keywords = expand_with_synonyms(keywords)
-    
-    # 5. Специальные маркеры
-    ctx_lower = context.lower()
-    if '[add_button]' in context:
-        keywords.update(['записаться', 'консультация', 'заявка', 'запись'])
-    if 'http' in context:
-        keywords.update(['ссылка', 'сайт', 'ресурс', 'материалы'])
-    if any(x in ctx_lower for x in ['цена', 'руб', '₽', 'стоимость', 'тариф']):
-        keywords.update(['цена', 'стоимость', 'тариф', 'оплата', 'сколько стоит', 'платно'])
-    if any(x in ctx_lower for x in ['python', 'питон', 'пайтон']):
-        keywords.update(['python', 'питон', 'пайтон', 'язык программирования'])
-    if any(x in ctx_lower for x in ['группа', 'мини-группа', 'индивидуально']):
-        keywords.update(['группа', 'мини-группа', 'индивидуально', 'формат'])
-    
-    # 6. Возвращаем максимум keywords
-    return list(keywords)[:max_kw]
-
-def update_keywords_in_db(kb_data: list, force_regenerate: bool = None) -> int:
-    """
-    Проверяет и обновляет keywords в main.json при старте.
-    Изменяет kb_data in-place.
-    
-    Возвращает количество обновлённых записей.
-    """
-    if force_regenerate is None:
-        force_regenerate = SETTINGS.get('force_regenerate', True)
-    
-    updated_count = 0
-    
-    for item in kb_data:
-        should_update = force_regenerate or not item.get('keywords') or len(item.get('keywords', [])) < 5
-        
-        if should_update:
-            new_kws = auto_generate_keywords(item['context'])
-            item['keywords'] = new_kws
-            updated_count += 1
-    
-    if updated_count > 0:
-        save_json(FILES['kb'], kb_data)
-        logger.info(f"✅ Авто-генерация keywords: обновлено {updated_count} записей.")
-    else:
-        logger.info("✅ Все keywords в порядке.")
-    
-    return updated_count
 
 # ============================================================
 # КЛАСС ИНДЕКСА (HYBRID SEARCH: Keywords + Context)
@@ -191,9 +93,11 @@ class KBIndex:
         self.contexts = [item['context'] for item in items] if items else []
         
         # ✅ Подготовка данных для BM25
+        # Используем context И keywords из JSON
         searchable_texts = []
         for item in items:
             text = item['context']
+            # Добавляем keywords к тексту для индексации, чтобы BM25 их учитывал
             if item.get('keywords'):
                 text += " " + " ".join(item['keywords'])
             searchable_texts.append(text)
@@ -201,14 +105,8 @@ class KBIndex:
         self.tokenized_contexts = [lemmatize_sentence(t).split() for t in searchable_texts] if searchable_texts else []
         self.bm25 = BM25Okapi(self.tokenized_contexts) if self.tokenized_contexts else None
         
-        # Сохраняем списки ключевых слов
+        # Сохраняем списки ключевых слов для точного матчинга
         self.item_keywords = [set(item.get('keywords', [])) for item in items]
-        
-        # Все keywords для нечеткого поиска
-        self.all_keywords = []
-        for item in items:
-            self.all_keywords.extend(item.get('keywords', []))
-        self.all_keywords = list(set(self.all_keywords))
     
     def search(self, query: str, top_k: int = 5, user_context: Optional[dict] = None) -> List[dict]:
         """
@@ -223,22 +121,23 @@ class KBIndex:
         # --- Шаг 1: Базовые оценки BM25 ---
         bm25_scores = self.bm25.get_scores(query_lemmas)
         
-        # --- Шаг 2: Бонусы за Keywords ---
+        # --- Шаг 2: Бонусы за Keywords (Точное совпадение) ---
         final_scores = bm25_scores.copy()
         
         for idx in range(len(self.items)):
             score_boost = 0.0
             
+            # Проверяем ключевые слова записи
             for kw in self.item_keywords[idx]:
+                # Если ключевое слово (фраза) найдено в запросе пользователя
                 if len(kw.split()) > 1 and kw.lower() in query_lower:
-                    score_boost += 5.0
+                    score_boost += 5.0  # Большой бонус за фразу
                 elif kw.lower() in query_lower:
-                    score_boost += 2.0
+                    score_boost += 2.0  # Бонус за слово
             
             # ✅ Бонус за контекст беседы
             if user_context:
                 history = user_context.get('history', [])
-                # ✅ deque не поддерживает срезы, конвертируем в list
                 history_list = list(history)
                 for hist_msg in history_list[-5:]:
                     hist_lemmas = set(lemmatize_sentence(hist_msg).split())
@@ -274,11 +173,10 @@ class KBIndex:
 def initialize_kb() -> KBIndex:
     """
     Инициализация базы знаний.
-    ✅ Использует приватную переменную _kb_index
+    ✅ Просто загружает JSON и создает индекс. Ничего не генерирует.
     """
     global _kb_index
     
-    # ✅ Сначала загружаем данные из файла
     kb_data = load_json(FILES['kb'])
     
     if not kb_data:
@@ -286,8 +184,10 @@ def initialize_kb() -> KBIndex:
         _kb_index = KBIndex([])
         return _kb_index
     
-    # Обновляем keywords (передаём kb_data, функция изменит его in-place)
-    update_keywords_in_db(kb_data)
+    # ✅ Проверка наличия keywords (просто для информации)
+    count_with_kw = sum(1 for item in kb_data if item.get('keywords'))
+    if count_with_kw < len(kb_data):
+        logger.warning(f"⚠️ Внимание: {len(kb_data) - count_with_kw} записей не имеют ключевых слов!")
     
     # Создание индекса
     _kb_index = KBIndex(kb_data)
@@ -299,7 +199,6 @@ def initialize_kb() -> KBIndex:
 # ПОИСК И КОНТЕКСТ
 # ============================================================
 def get_user_context(user_id: int) -> dict:
-    """Получение или создание контекста пользователя"""
     if user_id not in user_contexts:
         user_contexts[user_id] = {
             "history": deque(maxlen=SETTINGS['max_history']),
@@ -309,37 +208,30 @@ def get_user_context(user_id: int) -> dict:
     return user_contexts[user_id]
 
 def update_user_activity(user_id: int):
-    """Обновление активности пользователя"""
     ctx = get_user_context(user_id)
     ctx["last_activity"] = datetime.now()
 
 def save_question_for_answer(user_id: int, ans_idx: int, question: str):
-    """Сохранение вопроса для конкретного ответа"""
     ctx = get_user_context(user_id)
     ctx["question_index_map"][ans_idx] = question
 
 def get_question_for_answer(user_id: int, ans_idx: int) -> str:
-    """Получение вопроса для конкретного ответа"""
     ctx = get_user_context(user_id)
     return ctx.get("question_index_map", {}).get(ans_idx, "???")
 
 def save_message_to_history(user_id: int, message: str, is_user: bool = True):
-    """Сохранение сообщения в историю"""
     ctx = get_user_context(user_id)
     prefix = "User: " if is_user else "Bot: "
     ctx["history"].append(f"{prefix}{message}")
 
 def get_contextual_question(user_id: int, current_question: str) -> str:
-    """Добавляет контекст из истории для уточняющих вопросов"""
     ctx = get_user_context(user_id)
     history = ctx.get("history", [])
     
     if not history:
         return current_question
     
-    # ✅ deque не поддерживает срезы, конвертируем в list один раз
     history_list = list(history)
-    
     context_markers = ['а', 'а есть', 'а как', 'а сколько', 'а скидки', 'а рассрочка', 'а документ', 
                        'и', 'тоже', 'также', 'еще', 'ещё', 'продолжи', 'далее']
     q_lower = current_question.lower()
@@ -352,7 +244,6 @@ def get_contextual_question(user_id: int, current_question: str) -> str:
     return current_question
 
 def cleanup_inactive_users():
-    """Очистка памяти от неактивных пользователей"""
     now = datetime.now()
     to_delete = [
         uid for uid, ctx in user_contexts.items()
@@ -365,7 +256,6 @@ def cleanup_inactive_users():
 # ИЗВЛЕЧЕНИЕ ССЫЛОК ДЛЯ КНОПОК
 # ============================================================
 def extract_links_and_buttons(text: str) -> Tuple[str, List[List[dict]]]:
-    """Извлекает URL и создает структуру для кнопок"""
     buttons = []
     url_pattern = r'(https?://[^\s<]+)'
     urls = re.findall(url_pattern, text)
