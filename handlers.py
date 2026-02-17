@@ -11,12 +11,14 @@ from config import (
     SCORE_DIRECT_ANSWER, SCORE_CLARIFY, logger
 )
 from utils import (
-    kb_index,  # глобальная переменная, будет инициализирована в main
+    kb_index,
+    user_contexts,                     # добавить
     load_json, save_json,
     search_knowledge_base, get_user_context, update_user_activity,
     save_question_for_answer, get_question_for_answer,
     add_favorite, remove_favorite, get_favorites,
-    extract_links_and_buttons, cleanup_inactive_users
+    extract_links_and_buttons, cleanup_inactive_users,
+    get_contextual_question             # добавить
 )
 
 try:
