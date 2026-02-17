@@ -238,7 +238,9 @@ class KBIndex:
             # ✅ Бонус за контекст беседы
             if user_context:
                 history = user_context.get('history', [])
-                for hist_msg in history[-5:]:
+                # ✅ deque не поддерживает срезы, конвертируем в list
+                history_list = list(history)
+                for hist_msg in history_list[-5:]:
                     hist_lemmas = set(lemmatize_sentence(hist_msg).split())
                     query_lemmas_set = set(query_lemmas)
                     overlap = len(hist_lemmas & query_lemmas_set)
@@ -335,12 +337,15 @@ def get_contextual_question(user_id: int, current_question: str) -> str:
     if not history:
         return current_question
     
+    # ✅ deque не поддерживает срезы, конвертируем в list один раз
+    history_list = list(history)
+    
     context_markers = ['а', 'а есть', 'а как', 'а сколько', 'а скидки', 'а рассрочка', 'а документ', 
                        'и', 'тоже', 'также', 'еще', 'ещё', 'продолжи', 'далее']
     q_lower = current_question.lower()
     
     if len(q_lower) < 20 or any(marker in q_lower for marker in context_markers):
-        recent_history = list(history)[-3:] if len(history) >= 3 else list(history)
+        recent_history = history_list[-3:] if len(history_list) >= 3 else history_list
         history_context = " ".join(recent_history)
         return f"{history_context} {current_question}"
     
