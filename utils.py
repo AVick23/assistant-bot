@@ -266,14 +266,13 @@ class KBIndex:
 # ============================================================
 def initialize_kb() -> KBIndex:
     """Инициализация базы знаний"""
-    global kb_index
+    global kb_index  # ✅ КЛЮЧЕВОЕ: обновляем глобальную переменную
     
-    # ✅ Сначала авто-обновление keywords (ВСЕГДА перегенерирует)
-    update_keywords_in_db(force_regenerate=True)
+    # Сначала авто-обновление keywords
+    kb_data = update_keywords_in_db()
     
-    # Создание индекса
-    data = load_json(FILES['kb'])
-    kb_index = KBIndex(data)
+    # Создание индекса и сохранение в глобалку
+    kb_index = KBIndex(kb_data)
     
     logger.info(f"✅ База знаний загружена: {len(kb_index.items)} записей")
     return kb_index
