@@ -1,30 +1,32 @@
+# utils.py
 import json
 import re
-import os
-from pathlib import Path
-from typing import List, Set, Dict, Tuple, Optional, Any
+import numpy as np
+import warnings
+import logging
+from typing import Dict, List, Set, Optional, Tuple, Any
 from collections import deque
 from datetime import datetime, timedelta
 
-import numpy as np
 import pymorphy2
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from config import (
-    RUSSIAN_STOPWORDS, SYNONYMS, logger,
-    MIN_FULLTEXT_SCORE, MAX_HISTORY_LENGTH, INACTIVITY_LIMIT_HOURS
-)
+try:
+    from thefuzz import process
+    FUZZY_ENABLED = True
+except ImportError:
+    FUZZY_ENABLED = False
+
+from config import RUSSIAN_STOPWORDS, SYNONYMS, MAX_HISTORY_LENGTH, INACTIVITY_LIMIT_HOURS
+
+logger = logging.getLogger(__name__)
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 morph = pymorphy2.MorphAnalyzer()
 
-# Глобальные переменные
-kb_index = None
-user_contexts: Dict[int, dict] = {}
 
-
-# ====================== Работа с JSON ======================
-
+# --- JSON утилиты ---
 def load_json(file_path: str) -> list:
     if not os.path.exists(file_path):
         return []
@@ -35,6 +37,7 @@ def load_json(file_path: str) -> list:
         logger.error(f"Error loading {file_path}: {e}")
         return []
 
+
 def save_json(file_path: str, data: list) -> None:
     try:
         with open(file_path, "w", encoding="utf-8") as f:
@@ -43,19 +46,7 @@ def save_json(file_path: str, data: list) -> None:
         logger.error(f"Error saving {file_path}: {e}")
 
 
-# ====================== Загрузка базы знаний ======================
-
-def load_knowledge_base(file_path: str) -> list:
-    """Загружает сырой JSON из файла."""
-    path = Path(file_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Файл базы знаний не найден: {file_path}")
-    with open(file_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
-# ====================== NLP функции ======================
-
+# --- Текстовая предобработка ---
 def preprocess_question(question: str) -> str:
     patterns = [
         r'^а если\s+', r'^что если\s+', r'^что будет если\s+',
@@ -67,10 +58,12 @@ def preprocess_question(question: str) -> str:
         cleaned = re.sub(pattern, '', cleaned)
     return cleaned.strip()
 
+
 def preprocess_text(text: str) -> str:
     text = re.sub(r'https?://\S+|www\.\S+', '', text)
     text = re.sub(r'\S+@\S+', '', text)
     return re.sub(r'[^\w\s]', ' ', text.lower().strip())
+
 
 def lemmatize_word(word: str) -> str:
     if not hasattr(lemmatize_word, 'cache'):
@@ -82,45 +75,46 @@ def lemmatize_word(word: str) -> str:
     lemmatize_word.cache[word] = lemma
     return lemma
 
+
 def lemmatize_sentence(text: str) -> str:
     text = re.sub(r'[?!.]', '', text)
     words = preprocess_text(text).split()
-    lemmas = [lemmatize_word(word) for word in words
-              if word not in RUSSIAN_STOPWORDS and len(word) > 2]
+    lemmas = [lemmatize_word(word) for word in words if word not in RUSSIAN_STOPWORDS and len(word) > 2]
     return " ".join(lemmas)
+
 
 def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
     expanded = set(keywords)
     for word in keywords:
-        for base, synonyms in SYNONYMS.items():
-            if word == base or any(word == syn for syn in synonyms):
-                expanded.update([base] + synonyms)
+        for base, syns in SYNONYMS.items():
+            if word == base or any(word == syn for syn in syns):
+                expanded.update([base] + syns)
     return expanded
 
-def extract_keywords(text: str, use_synonyms: bool = True) -> Set[str]:
-    cleaned = preprocess_text(text)
-    words = cleaned.split()
-    keywords = {lemmatize_word(word) for word in words
-                if len(word) > 2 and word not in RUSSIAN_STOPWORDS}
-    if use_synonyms and keywords:
+
+def extract_keywords(text: str, use_synonyms: bool = True) -> set:
+    cleaned_text = preprocess_text(text)
+    words = cleaned_text.split()
+    keywords = {lemmatize_word(word) for word in words if len(word) > 2 and word not in RUSSIAN_STOPWORDS}
+    if use_synonyms:
         keywords = expand_with_synonyms(keywords)
     return keywords
 
+
 def calculate_keyword_match_score(user_keywords: Set[str], item_keywords: Set[str],
-                                  user_question: str, original_keywords: List[str]) -> float:
-    common = user_keywords.intersection(item_keywords)
-    base_score = len(common) * 2
+                                   user_question: str, original_keywords: List[str]) -> float:
+    common_keywords = user_keywords.intersection(item_keywords)
+    base_score = len(common_keywords) * 2
     question_lower = preprocess_text(user_question)
     phrase_bonus = 0
-    for kw in original_keywords:
-        kw_lower = preprocess_text(kw)
-        if kw_lower in question_lower:
-            phrase_bonus += len(kw_lower.split()) * 3
+    for orig_keyword in original_keywords:
+        keyword_lower = preprocess_text(orig_keyword)
+        if keyword_lower in question_lower:
+            phrase_bonus += len(keyword_lower.split()) * 3
     return base_score + phrase_bonus
 
 
-# ====================== Класс индекса базы знаний ======================
-
+# --- Индекс базы знаний ---
 class KBIndex:
     def __init__(self):
         self.items = []
@@ -138,8 +132,8 @@ class KBIndex:
             ngram_range=(1, 3),
             max_features=3000
         )
-        lemmatized = [lemmatize_sentence(ctx) for ctx in contexts]
-        self.tfidf_labeled_matrix = self.tfidf_vectorizer.fit_transform(lemmatized)
+        lemmatized_contexts = [lemmatize_sentence(ctx) for ctx in contexts]
+        self.tfidf_labeled_matrix = self.tfidf_vectorizer.fit_transform(lemmatized_contexts)
 
         self.raw_tfidf_vectorizer = TfidfVectorizer(
             lowercase=True,
@@ -159,39 +153,35 @@ class KBIndex:
         if not user_keywords:
             return []
 
-        scored = []
+        scored_items = []
         for idx, item in enumerate(self.items):
             score = calculate_keyword_match_score(
                 user_keywords, item["keywords"], user_question, item["original_keywords"]
             )
             if score > 0:
-                scored.append({
-                    "context": item["context"],
-                    "score": score,
-                    "index": idx
-                })
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        return scored[:top_k]
+                scored_items.append({"context": item["context"], "score": score, "index": idx})
+
+        scored_items.sort(key=lambda x: x["score"], reverse=True)
+        return scored_items[:top_k]
 
     def fulltext_search(self, query: str, top_k: int = 3) -> List[dict]:
         if self.tfidf_vectorizer is None or self.tfidf_labeled_matrix is None:
             return []
-
         try:
             query_lemma = lemmatize_sentence(query)
             query_vec = self.tfidf_vectorizer.transform([query_lemma])
-            labeled_sim = cosine_similarity(query_vec, self.tfidf_labeled_matrix)[0]
+            labeled_similarities = cosine_similarity(query_vec, self.tfidf_labeled_matrix)[0]
 
-            raw_vec = self.raw_tfidf_vectorizer.transform([query])
-            raw_sim = cosine_similarity(raw_vec, self.tfidf_raw_matrix)[0]
+            raw_query_vec = self.raw_tfidf_vectorizer.transform([query])
+            raw_similarities = cosine_similarity(raw_query_vec, self.tfidf_raw_matrix)[0]
 
-            combined = 0.7 * labeled_sim + 0.3 * raw_sim
-            top_indices = np.argsort(combined)[::-1][:top_k]
+            combined_similarities = 0.7 * labeled_similarities + 0.3 * raw_similarities
+            top_indices = np.argsort(combined_similarities)[::-1][:top_k]
 
             results = []
             for idx in top_indices:
-                score = combined[idx]
-                if score > MIN_FULLTEXT_SCORE:
+                score = combined_similarities[idx]
+                if score > 0.15:
                     results.append({
                         "context": self.contexts[idx],
                         "score": float(score),
@@ -211,17 +201,18 @@ def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
     processed_items = []
     contexts = [item["context"] for item in knowledge_base]
 
-    for item in knowledge_base:
+    for i, item in enumerate(knowledge_base):
         processed_keywords = set()
         for keyword in item["keywords"]:
             for word in re.split(r'\s+', preprocess_text(keyword)):
                 if len(word) > 2 and word not in RUSSIAN_STOPWORDS:
                     processed_keywords.add(lemmatize_word(word))
-        processed_items.append({
+        item_data = {
             "context": item["context"],
             "keywords": processed_keywords,
             "original_keywords": item["keywords"]
-        })
+        }
+        processed_items.append(item_data)
 
     kb_index.items = processed_items
     kb_index.contexts = contexts
@@ -229,136 +220,119 @@ def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
     return kb_index
 
 
-def init_knowledge_base(file_path: str) -> None:
-    """Инициализирует глобальный kb_index."""
-    global kb_index
-    raw = load_knowledge_base(file_path)
-    kb_index = preprocess_knowledge_base(raw)
-    logger.info(f"✅ База знаний загружена: {len(kb_index.items)} записей")
-
-
 def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Optional[str], float, List[dict]]:
-    cleaned = preprocess_question(user_question)
+    cleaned_question = preprocess_question(user_question)
 
-    kw_results = kb_index.keyword_search(cleaned, top_k=5)
-    ft_results = kb_index.fulltext_search(cleaned, top_k=5)
+    keyword_results = kb_index.keyword_search(cleaned_question, top_k=5)
+    fulltext_results = kb_index.fulltext_search(cleaned_question, top_k=5)
 
-    if not kw_results and not ft_results:
-        kw_results = kb_index.keyword_search(user_question, top_k=5)
-        ft_results = kb_index.fulltext_search(user_question, top_k=5)
+    if not keyword_results and not fulltext_results:
+        keyword_results = kb_index.keyword_search(user_question, top_k=5)
+        fulltext_results = kb_index.fulltext_search(user_question, top_k=5)
 
-    combined = {}
-    for res in kw_results:
-        combined.setdefault(res["index"], 0)
-        combined[res["index"]] += res["score"] * 0.6
+    combined_results = {}
+    for res in keyword_results:
+        combined_results.setdefault(res["index"], 0)
+        combined_results[res["index"]] += res["score"] * 0.6
 
-    for res in ft_results:
-        combined.setdefault(res["index"], 0)
-        combined[res["index"]] += res["score"] * 50 * 0.4
+    for res in fulltext_results:
+        combined_results.setdefault(res["index"], 0)
+        combined_results[res["index"]] += res["score"] * 50 * 0.4
 
-    if not combined:
-        return None, 0.0, []
+    if combined_results:
+        sorted_results = sorted(combined_results.items(), key=lambda x: x[1], reverse=True)
+        candidates = []
+        for idx, score in sorted_results[:3]:
+            topic_name = kb_index.items[idx]["original_keywords"][0] if kb_index.items[idx]["original_keywords"] else "Тема"
+            candidates.append({
+                "index": idx,
+                "score": score,
+                "topic": topic_name,
+                "context": kb_index.items[idx]["context"]
+            })
 
-    sorted_items = sorted(combined.items(), key=lambda x: x[1], reverse=True)
-    candidates = []
-    for idx, score in sorted_items[:3]:
-        topic = kb_index.items[idx]["original_keywords"][0] if kb_index.items[idx]["original_keywords"] else "Тема"
-        candidates.append({
-            "index": idx,
-            "score": score,
-            "topic": topic,
-            "context": kb_index.items[idx]["context"]
-        })
+        best_idx, best_score = sorted_results[0]
+        if best_score > 3.5:
+            return kb_index.items[best_idx]["context"], best_score, candidates
+        if best_score > 1.0:
+            return kb_index.items[best_idx]["context"], best_score, candidates
 
-    best_idx, best_score = sorted_items[0]
-    return kb_index.items[best_idx]["context"], best_score, candidates
+    return None, 0.0, []
 
 
-# ====================== Управление контекстом пользователя ======================
+def get_fuzzy_suggestion(question: str, kb_index: KBIndex) -> Optional[str]:
+    if not FUZZY_ENABLED or not kb_index.all_keywords_list:
+        return None
+    best_match, score = process.extractOne(question, kb_index.all_keywords_list)
+    if score > 70:
+        return best_match
+    return None
 
-def get_user_context(user_id: int) -> dict:
-    if user_id not in user_contexts:
-        user_contexts[user_id] = {
-            "history": deque(maxlen=MAX_HISTORY_LENGTH),
+
+# --- Управление контекстом пользователя (хранится в bot_data) ---
+def init_user_context(context, user_id: int):
+    """Инициализирует контекст для пользователя, если его нет."""
+    if 'user_contexts' not in context.bot_data:
+        context.bot_data['user_contexts'] = {}
+    if user_id not in context.bot_data['user_contexts']:
+        context.bot_data['user_contexts'][user_id] = {
+            "history": deque(maxlen=MAX_HISTORY_LENGTH),   # список вопросов
+            "answers": deque(maxlen=MAX_HISTORY_LENGTH),   # список ответов
             "last_activity": datetime.now(),
-            "question_index_map": {},
-            "favorites": set()
+            "question_index_map": {},                       # связь индекса ответа с вопросом
         }
-    return user_contexts[user_id]
+    return context.bot_data['user_contexts'][user_id]
 
-def update_user_activity(user_id: int) -> None:
-    get_user_context(user_id)["last_activity"] = datetime.now()
 
-def cleanup_inactive_users() -> None:
+def get_user_context(context, user_id: int) -> dict:
+    return init_user_context(context, user_id)
+
+
+def update_user_activity(context, user_id: int) -> None:
+    ctx = get_user_context(context, user_id)
+    ctx["last_activity"] = datetime.now()
+
+
+def cleanup_inactive_users(context) -> None:
     now = datetime.now()
-    to_delete = [
-        uid for uid, ctx in user_contexts.items()
-        if now - ctx.get("last_activity", now) > timedelta(hours=INACTIVITY_LIMIT_HOURS)
-    ]
+    to_delete = []
+    if 'user_contexts' not in context.bot_data:
+        return
+    for uid, ctx in context.bot_data['user_contexts'].items():
+        if now - ctx.get("last_activity", now) > timedelta(hours=INACTIVITY_LIMIT_HOURS):
+            to_delete.append(uid)
     for uid in to_delete:
-        del user_contexts[uid]
+        del context.bot_data['user_contexts'][uid]
 
-def save_question_for_answer(user_id: int, answer_index: int, question: str) -> None:
-    ctx = get_user_context(user_id)
+
+def save_question_for_answer(context, user_id: int, answer_index: int, question: str) -> None:
+    ctx = get_user_context(context, user_id)
     ctx["question_index_map"][answer_index] = question
 
-def get_question_for_answer(user_id: int, answer_index: int) -> str:
-    ctx = get_user_context(user_id)
+
+def get_question_for_answer(context, user_id: int, answer_index: int) -> str:
+    ctx = get_user_context(context, user_id)
     return ctx.get("question_index_map", {}).get(answer_index, "???")
 
-def add_favorite(user_id: int, answer_index: int) -> None:
-    get_user_context(user_id)["favorites"].add(answer_index)
 
-def remove_favorite(user_id: int, answer_index: int) -> None:
-    get_user_context(user_id)["favorites"].discard(answer_index)
-
-def get_favorites(user_id: int) -> List[int]:
-    return list(get_user_context(user_id)["favorites"])
-
-def get_contextual_question(user_id: int, current_question: str) -> str:
-    ctx = get_user_context(user_id)
+def get_contextual_question(context, user_id: int, current_question: str) -> str:
+    ctx = get_user_context(context, user_id)
     history = ctx.get("history", [])
+
     if not history:
         return current_question
 
     context_markers = ['а', 'а есть', 'а как', 'а сколько', 'а скидки', 'а рассрочка', 'а документ']
     q_lower = current_question.lower()
+
     if len(q_lower) < 20 or any(marker in q_lower for marker in context_markers):
-        last_msg = list(history)[-1]
+        last_msg = list(history)[-1] if history else ""
         return f"{last_msg} {current_question}"
+
     return current_question
 
 
-# ====================== Извлечение ссылок и кнопок ======================
-
-def extract_links_and_buttons(text: str) -> Tuple[str, List[List[Any]]]:
-    from telegram import InlineKeyboardButton
-
-    buttons = []
-    url_pattern = r'(https?://[^\s<]+)'
-    urls = re.findall(url_pattern, text)
-
-    if urls:
-        for raw_url in set(urls):
-            clean_url = raw_url.replace("[add_button]", "").strip('.,;:!?()"\'[]{}')
-            if not clean_url:
-                continue
-
-            label = "🔗 Открыть ссылку"
-            if "roadmap" in clean_url.lower():
-                label = "🗺 Дорожная карта"
-            elif "Business-card" in clean_url or "avick23.github.io" in clean_url:
-                label = "👤 О преподавателе"
-            elif "t.me" in clean_url:
-                label = "💬 Telegram"
-            elif "calendar" in clean_url.lower():
-                label = "📅 Выбрать время"
-
-            buttons.append([InlineKeyboardButton(label, url=clean_url)])
-
-        clean_text = re.sub(url_pattern, '', text).strip()
-        clean_text = re.sub(r'\s+\.', '.', clean_text)
-        clean_text = re.sub(r'\(\s*\)', '', clean_text).strip()
-        return clean_text, buttons
-
-    return text, []
+def add_to_history(context, user_id: int, question: str, answer: str):
+    ctx = get_user_context(context, user_id)
+    ctx["history"].append(question)
+    ctx["answers"].append(answer)
