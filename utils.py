@@ -16,8 +16,15 @@ from config import (
 # ============================================================
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 # ============================================================
-kb_index = None
+_kb_index = None  # ✅ Приватная переменная
 user_contexts: Dict[int, dict] = {}
+
+# ============================================================
+# ГЕТТЕР ДЛЯ KB_INDEX (решает проблему с None)
+# ============================================================
+def get_kb_index() -> 'KBIndex':
+    """Возвращает текущий индекс базы знаний"""
+    return _kb_index
 
 # ============================================================
 # РАБОТА С JSON
@@ -80,12 +87,11 @@ def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
     return expanded
 
 # ============================================================
-# АВТО-ГЕНЕРАЦИЯ KEYWORDS (ВСЕГДА ПЕРЕГЕНЕРИРУЕТ)
+# АВТО-ГЕНЕРАЦИЯ KEYWORDS
 # ============================================================
 def auto_generate_keywords(context: str, max_kw: int = None) -> List[str]:
     """
     Автоматически извлекает ключевые слова из текста.
-    ✅ ВСЕГДА генерирует максимально много keywords
     """
     if max_kw is None:
         max_kw = SETTINGS.get('max_keywords', 30)
@@ -101,7 +107,6 @@ def auto_generate_keywords(context: str, max_kw: int = None) -> List[str]:
         if len(word) > 2 and word not in RUSSIAN_STOPWORDS:
             try:
                 parsed = morph.parse(word)[0]
-                # Берем существительные, прилагательные, глаголы
                 if any(tag in parsed.tag for tag in ['NOUN', 'ADJF', 'INFN', 'VERB']):
                     keywords.add(parsed.normal_form)
             except:
@@ -152,14 +157,9 @@ def auto_generate_keywords(context: str, max_kw: int = None) -> List[str]:
 def update_keywords_in_db(kb_data: list, force_regenerate: bool = None) -> int:
     """
     Проверяет и обновляет keywords в main.json при старте.
-    ✅ По умолчанию ВСЕГДА перегенерирует ВСЕ keywords
+    Изменяет kb_data in-place.
     
-    Аргументы:
-        kb_data: список данных базы знаний (изменяется in-place)
-        force_regenerate: принудительная перегенерация
-    
-    Возвращает:
-        int: количество обновлённых записей
+    Возвращает количество обновлённых записей.
     """
     if force_regenerate is None:
         force_regenerate = SETTINGS.get('force_regenerate', True)
@@ -167,8 +167,6 @@ def update_keywords_in_db(kb_data: list, force_regenerate: bool = None) -> int:
     updated_count = 0
     
     for item in kb_data:
-        # Всегда перегенерируем если force_regenerate=True
-        # Иначе только если keywords нет или их мало
         should_update = force_regenerate or not item.get('keywords') or len(item.get('keywords', [])) < 5
         
         if should_update:
@@ -190,21 +188,20 @@ def update_keywords_in_db(kb_data: list, force_regenerate: bool = None) -> int:
 class KBIndex:
     def __init__(self, items: list):
         self.items = items
-        self.contexts = [item['context'] for item in items]
+        self.contexts = [item['context'] for item in items] if items else []
         
-        # ✅ Подготовка данных для BM25 (контекст + keywords вместе)
+        # ✅ Подготовка данных для BM25
         searchable_texts = []
         for item in items:
-            # Объединяем контекст и keywords для поиска
             text = item['context']
             if item.get('keywords'):
                 text += " " + " ".join(item['keywords'])
             searchable_texts.append(text)
         
-        self.tokenized_contexts = [lemmatize_sentence(t).split() for t in searchable_texts]
-        self.bm25 = BM25Okapi(self.tokenized_contexts)
+        self.tokenized_contexts = [lemmatize_sentence(t).split() for t in searchable_texts] if searchable_texts else []
+        self.bm25 = BM25Okapi(self.tokenized_contexts) if self.tokenized_contexts else None
         
-        # Сохраняем списки ключевых слов для быстрых проверок
+        # Сохраняем списки ключевых слов
         self.item_keywords = [set(item.get('keywords', [])) for item in items]
         
         # Все keywords для нечеткого поиска
@@ -217,29 +214,31 @@ class KBIndex:
         """
         ✅ Гибридный поиск: BM25 + Keywords + Контекст беседы
         """
+        if not self.items or not self.bm25:
+            return []
+        
         query_lemmas = lemmatize_sentence(query).split()
         query_lower = preprocess_text(query)
         
-        # --- Шаг 1: Получаем базовые оценки BM25 ---
+        # --- Шаг 1: Базовые оценки BM25 ---
         bm25_scores = self.bm25.get_scores(query_lemmas)
         
-        # --- Шаг 2: Добавляем бонусы за Keywords ---
+        # --- Шаг 2: Бонусы за Keywords ---
         final_scores = bm25_scores.copy()
         
         for idx in range(len(self.items)):
             score_boost = 0.0
             
-            # Проверяем точное вхождение фраз из keywords
             for kw in self.item_keywords[idx]:
                 if len(kw.split()) > 1 and kw.lower() in query_lower:
-                    score_boost += 5.0  # Большой бонус за фразу
+                    score_boost += 5.0
                 elif kw.lower() in query_lower:
-                    score_boost += 2.0  # Бонус за слово
+                    score_boost += 2.0
             
-            # ✅ Бонус за контекст беседы (если есть история)
+            # ✅ Бонус за контекст беседы
             if user_context:
                 history = user_context.get('history', [])
-                for hist_msg in history[-5:]:  # Последние 5 сообщений
+                for hist_msg in history[-5:]:
                     hist_lemmas = set(lemmatize_sentence(hist_msg).split())
                     query_lemmas_set = set(query_lemmas)
                     overlap = len(hist_lemmas & query_lemmas_set)
@@ -254,7 +253,7 @@ class KBIndex:
         results = []
         for idx in top_indices:
             score = final_scores[idx]
-            if score > 0.5:  # Порог уверенности
+            if score > 0.5:
                 results.append({
                     "index": int(idx),
                     "score": float(score),
@@ -273,26 +272,26 @@ class KBIndex:
 def initialize_kb() -> KBIndex:
     """
     Инициализация базы знаний.
-    ✅ ИСПРАВЛЕНО: теперь правильно загружает данные и обновляет keywords
+    ✅ Использует приватную переменную _kb_index
     """
-    global kb_index  # ✅ КЛЮЧЕВОЕ: обновляем глобальную переменную
+    global _kb_index
     
-    # ✅ ИСПРАВЛЕНО: Сначала загружаем данные из файла
+    # ✅ Сначала загружаем данные из файла
     kb_data = load_json(FILES['kb'])
     
     if not kb_data:
         logger.error("❌ База знаний пуста или файл не найден!")
-        kb_index = KBIndex([])
-        return kb_index
+        _kb_index = KBIndex([])
+        return _kb_index
     
-    # Затем авто-обновление keywords (передаём kb_data, функция изменит его in-place)
+    # Обновляем keywords (передаём kb_data, функция изменит его in-place)
     update_keywords_in_db(kb_data)
     
-    # Создание индекса и сохранение в глобалку
-    kb_index = KBIndex(kb_data)
+    # Создание индекса
+    _kb_index = KBIndex(kb_data)
     
-    logger.info(f"✅ База знаний загружена: {len(kb_index.items)} записей")
-    return kb_index
+    logger.info(f"✅ База знаний загружена: {len(_kb_index.items)} записей")
+    return _kb_index
 
 # ============================================================
 # ПОИСК И КОНТЕКСТ
@@ -301,9 +300,9 @@ def get_user_context(user_id: int) -> dict:
     """Получение или создание контекста пользователя"""
     if user_id not in user_contexts:
         user_contexts[user_id] = {
-            "history": deque(maxlen=SETTINGS['max_history']),  # ✅ 10 сообщений
+            "history": deque(maxlen=SETTINGS['max_history']),
             "last_activity": datetime.now(),
-            "question_index_map": {}  # map: answer_index -> question
+            "question_index_map": {}
         }
     return user_contexts[user_id]
 
@@ -323,30 +322,24 @@ def get_question_for_answer(user_id: int, ans_idx: int) -> str:
     return ctx.get("question_index_map", {}).get(ans_idx, "???")
 
 def save_message_to_history(user_id: int, message: str, is_user: bool = True):
-    """
-    ✅ Сохранение сообщения в историю (вопрос или ответ)
-    """
+    """Сохранение сообщения в историю"""
     ctx = get_user_context(user_id)
     prefix = "User: " if is_user else "Bot: "
     ctx["history"].append(f"{prefix}{message}")
 
 def get_contextual_question(user_id: int, current_question: str) -> str:
-    """
-    ✅ Добавляет контекст из истории для уточняющих вопросов
-    """
+    """Добавляет контекст из истории для уточняющих вопросов"""
     ctx = get_user_context(user_id)
     history = ctx.get("history", [])
     
     if not history:
         return current_question
     
-    # Если вопрос короткий или содержит маркеры уточнения
     context_markers = ['а', 'а есть', 'а как', 'а сколько', 'а скидки', 'а рассрочка', 'а документ', 
                        'и', 'тоже', 'также', 'еще', 'ещё', 'продолжи', 'далее']
     q_lower = current_question.lower()
     
     if len(q_lower) < 20 or any(marker in q_lower for marker in context_markers):
-        # Добавляем последние 3 сообщения из истории
         recent_history = list(history)[-3:] if len(history) >= 3 else list(history)
         history_context = " ".join(recent_history)
         return f"{history_context} {current_question}"

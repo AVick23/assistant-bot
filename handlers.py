@@ -9,12 +9,12 @@ from config import (
     AppleStyleMessages
 )
 from utils import (
-    kb_index, get_user_context, update_user_activity,
+    get_kb_index, get_user_context, update_user_activity,
     save_question_for_answer, get_question_for_answer,
     cleanup_inactive_users, extract_links_and_buttons,
     load_json, save_json, user_contexts, initialize_kb,
     save_message_to_history, get_contextual_question,
-    update_keywords_in_db
+    update_keywords_in_db, KBIndex
 )
 
 # ============================================================
@@ -105,10 +105,13 @@ async def rebuild_keywords_command(update: Update, context: ContextTypes.DEFAULT
     try:
         import utils
         
-        # ✅ ИСПРАВЛЕНО: загружаем данные ПЕРЕД обновлением
-        kb_data = utils.load_json(FILES['kb'])
-        updated_count = utils.update_keywords_in_db(kb_data, force_regenerate=True)
-        utils.kb_index = utils.KBIndex(kb_data)
+        # ✅ Загружаем данные, обновляем, создаём новый индекс
+        kb_data = load_json(FILES['kb'])
+        updated_count = update_keywords_in_db(kb_data, force_regenerate=True)
+        
+        # ✅ Обновляем глобальный индекс через функцию
+        new_index = KBIndex(kb_data)
+        utils._kb_index = new_index  # обновляем приватную переменную
         
         await update.message.reply_text(
             f"✅ База знаний обновлена!\n\n"
@@ -129,6 +132,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = query.data
     update_user_activity(user_id)
+    
+    # ✅ Получаем индекс через функцию
+    kb_index = get_kb_index()
     
     if data == "menu_main":
         await query.edit_message_text(AppleStyleMessages.WELCOME_RETURNING, reply_markup=AppleKeyboards.main_menu(), parse_mode="HTML")
@@ -341,6 +347,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cleanup_inactive_users()
     ctx = get_user_context(user_id)
     update_user_activity(user_id)
+    
+    # ✅ Получаем индекс через функцию
+    kb_index = get_kb_index()
     
     # ✅ Сохраняем вопрос в историю
     save_message_to_history(user_id, user_question, is_user=True)
