@@ -27,7 +27,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     utils.get_user_context(user_id)
     utils.update_user_activity(user_id)
     
-    # ✅ ИСПРАВЛЕНО: Используем config.Messages
     text = config.Messages.WELCOME_RETURNING if is_returning else config.Messages.WELCOME
     
     await update.message.reply_text(
@@ -357,7 +356,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # Визуальная обратная связь и уведомление админа
     if fb_type == "like":
         # Уведомление админа
-        msg_text = f"{config.Messages.ADMIN_NOTIFY_NEW_LIKE}❓ {question}\n👤 @{user.username or user.id}"
+        msg_text = f"{config.Messages.ADMIN_NOTIFY_NEW_LIKE}❓ {question}\n💬 {answer[:80]}...\n👤 @{user.username or user.id}"
         await utils.notify_admin(context, msg_text)
         
         new_keyboard = InlineKeyboardMarkup([
@@ -366,7 +365,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_reply_markup(new_keyboard)
     else:
         # Уведомление админа
-        msg_text = f"{config.Messages.ADMIN_NOTIFY_NEW_DISLIKE}❓ {question}\n💬 {answer[:100]}...\n👤 @{user.username or user.id}"
+        msg_text = f"{config.Messages.ADMIN_NOTIFY_NEW_DISLIKE}❓ {question}\n💬 {answer[:80]}...\n👤 @{user.username or user.id}"
         await utils.notify_admin(context, msg_text)
         
         new_keyboard = InlineKeyboardMarkup([
@@ -578,8 +577,11 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE,
             elif data_type == "unknown":
                 text += f"{i}. {item.get('question', '???')}\n\n"
             else:
+                # ✅ ИСПРАВЛЕНО: Показываем и вопрос, и ответ для лайков/дизлайков
                 q = item.get('question', '???')
-                text += f"{i}. {q[:50]}{'...' if len(q) > 50 else ''}\n\n"
+                a = item.get('answer', '???')
+                text += (f"{i}. ❓ <b>Вопрос:</b> {q[:50]}{'...' if len(q) > 50 else ''}\n"
+                         f"   💬 <b>Ответ:</b> {a[:50]}{'...' if len(a) > 50 else ''}\n\n")
     
     keyboard = []
     
@@ -637,7 +639,8 @@ async def admin_do_clear(update: Update, context: ContextTypes.DEFAULT_TYPE, dat
     elif data_type == "unknown":
         utils.save_json(config.UNKNOWN_FILE, [])
     
-    await query.edit_message_text("✅ <b>Очищено успешно</b>", parse_mode="HTML")
+    # ✅ ИСПРАВЛЕНО: Вместо зависания показываем обновленный пустой список
+    await admin_show_list(update, context, data_type, 0)
 
 
 # ============================================================
