@@ -27,8 +27,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     utils.get_user_context(user_id)
     utils.update_user_activity(user_id)
     
-    # Выбор сообщения
-    text = utils.Messages.WELCOME_RETURNING if is_returning else utils.Messages.WELCOME
+    # ✅ ИСПРАВЛЕНО: Используем config.Messages
+    text = config.Messages.WELCOME_RETURNING if is_returning else config.Messages.WELCOME
     
     await update.message.reply_text(
         text, 
@@ -40,7 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка команды /help"""
     await update.message.reply_text(
-        utils.Messages.HELP, 
+        config.Messages.HELP, 
         parse_mode="HTML"
     )
 
@@ -109,7 +109,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     if data == "menu_main":
         await query.edit_message_text(
-            utils.Messages.WELCOME_RETURNING,
+            config.Messages.WELCOME_RETURNING,
             reply_markup=utils.AppleKeyboards.main_menu(user_id),
             parse_mode="HTML"
         )
@@ -148,7 +148,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         
         if not answer:
             await query.edit_message_text(
-                utils.Messages.NOT_FOUND,
+                config.Messages.NOT_FOUND,
                 reply_markup=utils.AppleKeyboards.back_button(),
                 parse_mode="HTML"
             )
@@ -287,7 +287,7 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     # ✅ Уведомление админа
     text = (
-        f"{utils.Messages.ADMIN_NOTIFY_NEW_CONSULT}"
+        f"{config.Messages.ADMIN_NOTIFY_NEW_CONSULT}"
         f"👤 {user.first_name or 'Без имени'}\n"
         f"📱 @{user.username or 'нет username'}\n"
         f"🆔 {user.id}"
@@ -297,7 +297,7 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     # Ответ пользователю
     keyboard = [[InlineKeyboardButton("📅 Выбрать время в календаре", url=config.CALENDAR_URL)]]
     await query.edit_message_text(
-        utils.Messages.CONSULTATION_SUCCESS,
+        config.Messages.CONSULTATION_SUCCESS,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
@@ -357,7 +357,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # Визуальная обратная связь и уведомление админа
     if fb_type == "like":
         # Уведомление админа
-        msg_text = f"{utils.Messages.ADMIN_NOTIFY_NEW_LIKE}❓ {question}\n👤 @{user.username or user.id}"
+        msg_text = f"{config.Messages.ADMIN_NOTIFY_NEW_LIKE}❓ {question}\n👤 @{user.username or user.id}"
         await utils.notify_admin(context, msg_text)
         
         new_keyboard = InlineKeyboardMarkup([
@@ -366,14 +366,14 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_reply_markup(new_keyboard)
     else:
         # Уведомление админа
-        msg_text = f"{utils.Messages.ADMIN_NOTIFY_NEW_DISLIKE}❓ {question}\n💬 {answer[:100]}...\n👤 @{user.username or user.id}"
+        msg_text = f"{config.Messages.ADMIN_NOTIFY_NEW_DISLIKE}❓ {question}\n💬 {answer[:100]}...\n👤 @{user.username or user.id}"
         await utils.notify_admin(context, msg_text)
         
         new_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📝 Жалоба отправлена", callback_data="ignore")]
         ])
         await query.edit_message_reply_markup(new_keyboard)
-        await query.message.reply_text(utils.Messages.FEEDBACK_DISLIKE, parse_mode="HTML")
+        await query.message.reply_text(config.Messages.FEEDBACK_DISLIKE, parse_mode="HTML")
 
 
 # ============================================================
@@ -389,7 +389,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     user_question = update.message.text.strip()
     
-    # Проверка админ-команд (можно вынести в отдельный handler, но оставим тут для простоты)
+    # Проверка админ-команд
     if await handle_admin_text(update, context):
         return
     
@@ -414,7 +414,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         keyboard.append([InlineKeyboardButton("❌ Не то", callback_data="clarify_none")])
         
         await update.message.reply_text(
-            utils.Messages.CLARIFY_PROMPT,
+            config.Messages.CLARIFY_PROMPT,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
@@ -431,7 +431,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     [InlineKeyboardButton(f"💡 {suggestion}?", callback_data=f"clarify_{candidates[0]['index']}")]
                 ]
                 await update.message.reply_text(
-                    utils.Messages.FUZZY_SUGGESTION,
+                    config.Messages.FUZZY_SUGGESTION,
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode="HTML"
                 )
@@ -449,11 +449,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         utils.save_json(config.UNKNOWN_FILE, unk)
         
         # ✅ Уведомление админа
-        text = f"{utils.Messages.ADMIN_NOTIFY_UNKNOWN}❓ {user_question}\n🆔 {user_id}"
+        text = f"{config.Messages.ADMIN_NOTIFY_UNKNOWN}❓ {user_question}\n🆔 {user_id}"
         await utils.notify_admin(context, text)
         
         await update.message.reply_text(
-            utils.Messages.NOT_FOUND,
+            config.Messages.NOT_FOUND,
             reply_markup=utils.AppleKeyboards.main_menu(user_id),
             parse_mode="HTML"
         )
