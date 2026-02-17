@@ -7,6 +7,7 @@ import logging
 from typing import Dict, List, Set, Optional, Tuple, Any
 from collections import deque
 from datetime import datetime, timedelta
+import os
 
 import pymorphy2
 from sklearn.feature_extraction.text import TfidfVectorizer
