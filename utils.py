@@ -16,18 +16,16 @@ from config import (
     MIN_FULLTEXT_SCORE, MAX_HISTORY_LENGTH, INACTIVITY_LIMIT_HOURS
 )
 
-# Инициализация морфологического анализатора
 morph = pymorphy2.MorphAnalyzer()
 
-# Глобальные переменные для хранения индекса и контекстов пользователей
-kb_index = None  # будет инициализирован в main.py
+# Глобальные переменные
+kb_index = None
 user_contexts: Dict[int, dict] = {}
 
 
 # ====================== Работа с JSON ======================
 
 def load_json(file_path: str) -> list:
-    """Безопасная загрузка JSON-файла"""
     if not os.path.exists(file_path):
         return []
     try:
@@ -38,7 +36,6 @@ def load_json(file_path: str) -> list:
         return []
 
 def save_json(file_path: str, data: list) -> None:
-    """Безопасное сохранение JSON-файла"""
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
@@ -46,10 +43,20 @@ def save_json(file_path: str, data: list) -> None:
         logger.error(f"Error saving {file_path}: {e}")
 
 
+# ====================== Загрузка базы знаний ======================
+
+def load_knowledge_base(file_path: str) -> list:
+    """Загружает сырой JSON из файла."""
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Файл базы знаний не найден: {file_path}")
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
 # ====================== NLP функции ======================
 
 def preprocess_question(question: str) -> str:
-    """Удаляет вводные фразы (а если, скажи и т.п.)"""
     patterns = [
         r'^а если\s+', r'^что если\s+', r'^что будет если\s+',
         r'^можно ли\s+', r'^а что если\s+', r'^если я\s+',
@@ -61,13 +68,11 @@ def preprocess_question(question: str) -> str:
     return cleaned.strip()
 
 def preprocess_text(text: str) -> str:
-    """Очистка текста от ссылок, email и знаков препинания"""
     text = re.sub(r'https?://\S+|www\.\S+', '', text)
     text = re.sub(r'\S+@\S+', '', text)
     return re.sub(r'[^\w\s]', ' ', text.lower().strip())
 
 def lemmatize_word(word: str) -> str:
-    """Лемматизация одного слова с кэшированием"""
     if not hasattr(lemmatize_word, 'cache'):
         lemmatize_word.cache = {}
     if word in lemmatize_word.cache:
@@ -78,7 +83,6 @@ def lemmatize_word(word: str) -> str:
     return lemma
 
 def lemmatize_sentence(text: str) -> str:
-    """Лемматизация предложения с удалением стоп-слов и коротких слов"""
     text = re.sub(r'[?!.]', '', text)
     words = preprocess_text(text).split()
     lemmas = [lemmatize_word(word) for word in words
@@ -86,7 +90,6 @@ def lemmatize_sentence(text: str) -> str:
     return " ".join(lemmas)
 
 def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
-    """Расширение множества ключевых слов синонимами"""
     expanded = set(keywords)
     for word in keywords:
         for base, synonyms in SYNONYMS.items():
@@ -95,7 +98,6 @@ def expand_with_synonyms(keywords: Set[str]) -> Set[str]:
     return expanded
 
 def extract_keywords(text: str, use_synonyms: bool = True) -> Set[str]:
-    """Извлечение ключевых слов из текста"""
     cleaned = preprocess_text(text)
     words = cleaned.split()
     keywords = {lemmatize_word(word) for word in words
@@ -106,7 +108,6 @@ def extract_keywords(text: str, use_synonyms: bool = True) -> Set[str]:
 
 def calculate_keyword_match_score(user_keywords: Set[str], item_keywords: Set[str],
                                   user_question: str, original_keywords: List[str]) -> float:
-    """Оценка совпадения по ключевым словам"""
     common = user_keywords.intersection(item_keywords)
     base_score = len(common) * 2
     question_lower = preprocess_text(user_question)
@@ -122,17 +123,15 @@ def calculate_keyword_match_score(user_keywords: Set[str], item_keywords: Set[st
 
 class KBIndex:
     def __init__(self):
-        self.items = []                # список словарей с ключами "context", "keywords", "original_keywords"
-        self.contexts = []              # только тексты ответов
+        self.items = []
+        self.contexts = []
         self.tfidf_vectorizer = None
         self.tfidf_labeled_matrix = None
         self.raw_tfidf_vectorizer = None
         self.tfidf_raw_matrix = None
-        self.all_keywords_list = []     # для нечёткого поиска
+        self.all_keywords_list = []
 
     def build_tfidf_index(self, contexts: List[str]):
-        """Строит два TF-IDF индекса: по лемматизированным текстам и по сырым"""
-        # Индекс по лемматизированным текстам (для лучшего semantic matching)
         self.tfidf_vectorizer = TfidfVectorizer(
             lowercase=True,
             stop_words=list(RUSSIAN_STOPWORDS),
@@ -142,7 +141,6 @@ class KBIndex:
         lemmatized = [lemmatize_sentence(ctx) for ctx in contexts]
         self.tfidf_labeled_matrix = self.tfidf_vectorizer.fit_transform(lemmatized)
 
-        # Индекс по сырым текстам (для учёта точных фраз)
         self.raw_tfidf_vectorizer = TfidfVectorizer(
             lowercase=True,
             stop_words=list(RUSSIAN_STOPWORDS),
@@ -151,14 +149,12 @@ class KBIndex:
         )
         self.tfidf_raw_matrix = self.raw_tfidf_vectorizer.fit_transform(contexts)
 
-        # Собираем все ключевые слова для нечёткого поиска
         all_kw = set()
         for item in self.items:
             all_kw.update(item["original_keywords"])
         self.all_keywords_list = list(all_kw)
 
     def keyword_search(self, user_question: str, top_k: int = 3) -> List[dict]:
-        """Поиск по ключевым словам (точное совпадение с бонусами)"""
         user_keywords = extract_keywords(user_question)
         if not user_keywords:
             return []
@@ -178,21 +174,17 @@ class KBIndex:
         return scored[:top_k]
 
     def fulltext_search(self, query: str, top_k: int = 3) -> List[dict]:
-        """TF-IDF поиск (комбинация лемматизированного и сырого)"""
         if self.tfidf_vectorizer is None or self.tfidf_labeled_matrix is None:
             return []
 
         try:
-            # Лемматизированный запрос
             query_lemma = lemmatize_sentence(query)
             query_vec = self.tfidf_vectorizer.transform([query_lemma])
             labeled_sim = cosine_similarity(query_vec, self.tfidf_labeled_matrix)[0]
 
-            # Сырой запрос
             raw_vec = self.raw_tfidf_vectorizer.transform([query])
             raw_sim = cosine_similarity(raw_vec, self.tfidf_raw_matrix)[0]
 
-            # Взвешенная сумма
             combined = 0.7 * labeled_sim + 0.3 * raw_sim
             top_indices = np.argsort(combined)[::-1][:top_k]
 
@@ -215,13 +207,11 @@ class KBIndex:
 
 
 def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
-    """Создаёт экземпляр KBIndex из сырой базы знаний (main.json)"""
     kb_index = KBIndex()
     processed_items = []
     contexts = [item["context"] for item in knowledge_base]
 
     for item in knowledge_base:
-        # Обработка ключевых слов: лемматизация, удаление стоп-слов
         processed_keywords = set()
         for keyword in item["keywords"]:
             for word in re.split(r'\s+', preprocess_text(keyword)):
@@ -239,22 +229,24 @@ def preprocess_knowledge_base(knowledge_base: list) -> KBIndex:
     return kb_index
 
 
+def init_knowledge_base(file_path: str) -> None:
+    """Инициализирует глобальный kb_index."""
+    global kb_index
+    raw = load_knowledge_base(file_path)
+    kb_index = preprocess_knowledge_base(raw)
+    logger.info(f"✅ База знаний загружена: {len(kb_index.items)} записей")
+
+
 def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Optional[str], float, List[dict]]:
-    """
-    Комбинированный поиск: объединяет результаты keyword_search и fulltext_search
-    с весами и возвращает лучший ответ (если уверенность высока) или список кандидатов.
-    """
     cleaned = preprocess_question(user_question)
 
     kw_results = kb_index.keyword_search(cleaned, top_k=5)
     ft_results = kb_index.fulltext_search(cleaned, top_k=5)
 
-    # Если по очищенному запросу ничего не нашлось, пробуем исходный
     if not kw_results and not ft_results:
         kw_results = kb_index.keyword_search(user_question, top_k=5)
         ft_results = kb_index.fulltext_search(user_question, top_k=5)
 
-    # Собираем общую оценку по индексам
     combined = {}
     for res in kw_results:
         combined.setdefault(res["index"], 0)
@@ -262,7 +254,7 @@ def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Option
 
     for res in ft_results:
         combined.setdefault(res["index"], 0)
-        combined[res["index"]] += res["score"] * 50 * 0.4  # Масштабируем TF-IDF до сопоставимых величин
+        combined[res["index"]] += res["score"] * 50 * 0.4
 
     if not combined:
         return None, 0.0, []
@@ -285,13 +277,12 @@ def search_knowledge_base(user_question: str, kb_index: KBIndex) -> Tuple[Option
 # ====================== Управление контекстом пользователя ======================
 
 def get_user_context(user_id: int) -> dict:
-    """Возвращает словарь контекста для пользователя, создаёт при необходимости"""
     if user_id not in user_contexts:
         user_contexts[user_id] = {
             "history": deque(maxlen=MAX_HISTORY_LENGTH),
             "last_activity": datetime.now(),
-            "question_index_map": {},   # связь индекса ответа с заданным вопросом
-            "favorites": set()           # новые: избранные ответы (индексы)
+            "question_index_map": {},
+            "favorites": set()
         }
     return user_contexts[user_id]
 
@@ -316,18 +307,15 @@ def get_question_for_answer(user_id: int, answer_index: int) -> str:
     return ctx.get("question_index_map", {}).get(answer_index, "???")
 
 def add_favorite(user_id: int, answer_index: int) -> None:
-    ctx = get_user_context(user_id)
-    ctx["favorites"].add(answer_index)
+    get_user_context(user_id)["favorites"].add(answer_index)
 
 def remove_favorite(user_id: int, answer_index: int) -> None:
-    ctx = get_user_context(user_id)
-    ctx["favorites"].discard(answer_index)
+    get_user_context(user_id)["favorites"].discard(answer_index)
 
 def get_favorites(user_id: int) -> List[int]:
     return list(get_user_context(user_id)["favorites"])
 
 def get_contextual_question(user_id: int, current_question: str) -> str:
-    """Добавляет последнее сообщение из истории, если текущий вопрос короткий или уточняющий"""
     ctx = get_user_context(user_id)
     history = ctx.get("history", [])
     if not history:
@@ -344,8 +332,7 @@ def get_contextual_question(user_id: int, current_question: str) -> str:
 # ====================== Извлечение ссылок и кнопок ======================
 
 def extract_links_and_buttons(text: str) -> Tuple[str, List[List[Any]]]:
-    """Ищет ссылки в тексте и возвращает чистый текст и список рядов InlineKeyboardButton"""
-    from telegram import InlineKeyboardButton  # импорт здесь, чтобы избежать циклического импорта
+    from telegram import InlineKeyboardButton
 
     buttons = []
     url_pattern = r'(https?://[^\s<]+)'
@@ -357,7 +344,6 @@ def extract_links_and_buttons(text: str) -> Tuple[str, List[List[Any]]]:
             if not clean_url:
                 continue
 
-            # Красивые подписи
             label = "🔗 Открыть ссылку"
             if "roadmap" in clean_url.lower():
                 label = "🗺 Дорожная карта"
@@ -370,7 +356,6 @@ def extract_links_and_buttons(text: str) -> Tuple[str, List[List[Any]]]:
 
             buttons.append([InlineKeyboardButton(label, url=clean_url)])
 
-        # Убираем ссылки из текста
         clean_text = re.sub(url_pattern, '', text).strip()
         clean_text = re.sub(r'\s+\.', '.', clean_text)
         clean_text = re.sub(r'\(\s*\)', '', clean_text).strip()

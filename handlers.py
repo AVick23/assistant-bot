@@ -1,6 +1,6 @@
 import math
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -11,14 +11,14 @@ from config import (
     SCORE_DIRECT_ANSWER, SCORE_CLARIFY, logger
 )
 from utils import (
-    kb_index, load_json, save_json,
+    kb_index,  # глобальная переменная, будет инициализирована в main
+    load_json, save_json,
     search_knowledge_base, get_user_context, update_user_activity,
     save_question_for_answer, get_question_for_answer,
     add_favorite, remove_favorite, get_favorites,
     extract_links_and_buttons, cleanup_inactive_users
 )
 
-# Попытка импорта нечёткого поиска (опционально)
 try:
     from thefuzz import process
     FUZZY_ENABLED = True
@@ -27,11 +27,9 @@ except ImportError:
     print("⚠️ Библиотека thefuzz не установлена. Поиск опечаток отключен.")
 
 
-# ====================== Клавиатуры в стиле Apple ======================
+# ====================== Клавиатуры ======================
 
 class AppleKeyboards:
-    """Все клавиатуры в едином стиле"""
-
     @staticmethod
     def main_menu(is_returning: bool = False) -> InlineKeyboardMarkup:
         keyboard = [
@@ -44,7 +42,7 @@ class AppleKeyboards:
                 InlineKeyboardButton("🧠 О методе", callback_data="menu_method"),
                 InlineKeyboardButton("👨‍🏫 О преподавателе", callback_data="menu_about")
             ],
-            [InlineKeyboardButton("⭐ Избранное", callback_data="menu_favorites")]  # новая кнопка
+            [InlineKeyboardButton("⭐ Избранное", callback_data="menu_favorites")]
         ]
         return InlineKeyboardMarkup(keyboard)
 
@@ -54,7 +52,7 @@ class AppleKeyboards:
             [
                 InlineKeyboardButton("👍 Полезно", callback_data=f"like_{answer_index}"),
                 InlineKeyboardButton("👎 Не помогло", callback_data=f"dislike_{answer_index}"),
-                InlineKeyboardButton("⭐ В избранное", callback_data=f"fav_add_{answer_index}")  # новая
+                InlineKeyboardButton("⭐ В избранное", callback_data=f"fav_add_{answer_index}")
             ]
         ]
 
@@ -84,12 +82,11 @@ class AppleKeyboards:
 
     @staticmethod
     def favorites_menu(favorite_indices: List[int]) -> InlineKeyboardMarkup:
-        """Меню со списком избранных ответов (по первой теме)"""
         if not favorite_indices:
             return AppleKeyboards.back_button()
 
         keyboard = []
-        for idx in favorite_indices[:5]:  # показываем не больше 5
+        for idx in favorite_indices[:5]:
             if kb_index and kb_index.is_valid_index(idx):
                 topic = kb_index.items[idx]["original_keywords"][0] if kb_index.items[idx]["original_keywords"] else f"Ответ #{idx}"
                 keyboard.append([InlineKeyboardButton(f"🔹 {topic}", callback_data=f"fav_show_{idx}")])
@@ -97,7 +94,7 @@ class AppleKeyboards:
         return InlineKeyboardMarkup(keyboard)
 
 
-# ====================== Тексты сообщений (Apple-style) ======================
+# ====================== Тексты ======================
 
 class AppleMessages:
     WELCOME = """👋 Привет!
@@ -158,8 +155,8 @@ class AppleMessages:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     cleanup_inactive_users()
-    is_returning = user_id in get_user_context(user_id)  # контекст уже создастся при вызове get_user_context
-    get_user_context(user_id)
+    ctx = get_user_context(user_id)
+    is_returning = user_id in user_contexts  # проверяем наличие в глобальном словаре
     update_user_activity(user_id)
 
     text = AppleMessages.WELCOME_RETURNING if is_returning else AppleMessages.WELCOME
@@ -185,7 +182,6 @@ async def roadmaps_command(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
 
 async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Быстрый доступ к часто задаваемым вопросам"""
     keyboard = [
         [InlineKeyboardButton("💰 Стоимость", callback_data="menu_cost")],
         [InlineKeyboardButton("👨‍🏫 О преподавателе", callback_data="menu_about")],
@@ -200,7 +196,6 @@ async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 async def favorites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показать избранное"""
     user_id = update.effective_user.id
     favs = get_favorites(user_id)
     if not favs:
@@ -210,7 +205,6 @@ async def favorites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    # Показываем список (максимум 5) в виде инлайн-кнопок
     keyboard = []
     for idx in favs[:5]:
         if kb_index and kb_index.is_valid_index(idx):
@@ -234,7 +228,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     data = query.data
     update_user_activity(user_id)
 
-    # Навигация по главному меню
     if data == "menu_main":
         await query.edit_message_text(
             AppleMessages.WELCOME_RETURNING,
@@ -267,7 +260,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    # Стандартные запросы из меню
     if data in ["menu_cost", "menu_method", "menu_about"]:
         q_map = {
             "menu_cost": "стоимость",
@@ -283,7 +275,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await query.edit_message_text(AppleMessages.NOT_FOUND, reply_markup=AppleKeyboards.back_button(), parse_mode="HTML")
             return
 
-        # Определяем индекс ответа
         ans_idx = candidates[0]['index'] if candidates else 0
         save_question_for_answer(user_id, ans_idx, q_map[data])
 
@@ -301,7 +292,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    # Уточнение вопроса (clarify)
     if data.startswith("clarify_"):
         if data == "clarify_none":
             await query.edit_message_text("Хорошо, попробуйте сформулировать иначе.", reply_markup=AppleKeyboards.back_button())
@@ -328,31 +318,24 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    # Консультация
     if data == "consultation":
         await consultation_callback(update, context)
         return
 
-    # Обратная связь (лайк/дизлайк)
     if data.startswith("like_") or data.startswith("dislike_"):
         await feedback_callback(update, context)
         return
 
-    # Избранное: добавить / показать / удалить
     if data.startswith("fav_add_"):
         idx = int(data.split("_")[2])
         add_favorite(user_id, idx)
         await query.answer(AppleMessages.FAVORITE_ADDED, show_alert=False)
-        # Обновляем клавиатуру (заменяем кнопку добавления на удаление)
-        # Для простоты просто показываем сообщение, клавиатура остаётся, но кнопка "В избранное" уже неактуальна
-        # Можно заменить на "Удалить из избранного", но для краткости оставим как есть.
         return
 
     if data.startswith("fav_remove_"):
         idx = int(data.split("_")[2])
         remove_favorite(user_id, idx)
         await query.answer(AppleMessages.FAVORITE_REMOVED, show_alert=False)
-        # Можно обновить сообщение
         return
 
     if data.startswith("fav_show_"):
@@ -366,9 +349,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if "[add_button]" in answer:
             url_buttons.append([InlineKeyboardButton("📝 Записаться", callback_data="consultation")])
 
-        # Добавляем кнопку для удаления из избранного
         url_buttons.append([InlineKeyboardButton("⭐ Удалить из избранного", callback_data=f"fav_remove_{idx}")])
-        url_buttons.extend(AppleKeyboards.feedback_buttons(idx))  # и лайк/дизлайк тоже
+        url_buttons.extend(AppleKeyboards.feedback_buttons(idx))
 
         await query.edit_message_text(
             clean_text,
@@ -378,7 +360,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    # Админ-панель
     if data.startswith("admin_"):
         await admin_callback(update, context)
         return
@@ -412,7 +393,6 @@ async def consultation_callback(update: Update, context: ContextTypes.DEFAULT_TY
     })
     save_json(CONSULTATIONS_FILE, consultations)
 
-    # Уведомление админу
     try:
         await context.bot.send_message(
             ADMIN_USER_ID,
@@ -454,7 +434,6 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         history = list(ctx.get("history", []))
         question = history[-1] if history else "Неизвестный вопрос"
 
-    # Сохраняем фидбек
     feedback = load_json(FEEDBACK_FILE)
     feedback.append({
         "type": fb_type,
@@ -466,7 +445,6 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     })
     save_json(FEEDBACK_FILE, feedback)
 
-    # Визуальный ответ
     if fb_type == "like":
         new_kb = InlineKeyboardMarkup([[InlineKeyboardButton("💚 Спасибо за оценку!", callback_data="ignore")]])
         await query.edit_message_reply_markup(new_kb)
@@ -475,7 +453,6 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_reply_markup(new_kb)
         await query.message.reply_text(AppleMessages.FEEDBACK_DISLIKE, parse_mode="HTML")
 
-        # Уведомление админу
         try:
             await context.bot.send_message(
                 ADMIN_USER_ID,
@@ -486,7 +463,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             logger.error(f"Admin notify error: {e}")
 
 
-# ====================== Админ-панель (расширенная) ======================
+# ====================== Админ-панель ======================
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -497,7 +474,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.answer("Доступ запрещён", show_alert=True)
         return
 
-    # Просмотр списков
     if data.startswith("admin_page_"):
         parts = data.split("_")
         await admin_show_list(update, context, parts[2], int(parts[3]))
@@ -531,7 +507,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if data == "admin_stats":
-        # Простая статистика
         users = len(user_contexts)
         cons = len(load_json(CONSULTATIONS_FILE))
         unk = len(load_json(UNKNOWN_FILE))
@@ -604,7 +579,6 @@ async def admin_show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, da
                 q = item.get('question', '???')
                 text += f"{i}. {q[:50]}{'...' if len(q) > 50 else ''}\n\n"
 
-    # Клавиатура с пагинацией и кнопками
     keyboard = []
     if total_pages > 1:
         nav_row = []
@@ -657,6 +631,14 @@ async def admin_do_clear(update: Update, context: ContextTypes.DEFAULT_TYPE, dat
 
 # ====================== Обработчик текстовых сообщений ======================
 
+def get_fuzzy_suggestion(question: str) -> Optional[str]:
+    if not FUZZY_ENABLED or not kb_index or not kb_index.all_keywords_list:
+        return None
+    best_match, score = process.extractOne(question, kb_index.all_keywords_list)
+    if score > 70:
+        return best_match
+    return None
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
@@ -664,24 +646,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     user_question = update.message.text.strip()
 
-    # Проверка админ-команд (текстовых)
     if await handle_admin_text(update, context):
         return
 
     cleanup_inactive_users()
-    get_user_context(user_id)
+    ctx = get_user_context(user_id)
     update_user_activity(user_id)
-    user_contexts[user_id]["history"].append(user_question)
+    ctx["history"].append(user_question)
 
     search_query = get_contextual_question(user_id, user_question)
     answer, score, candidates = search_knowledge_base(search_query, kb_index)
     final_answer = None
 
-    # Логика выбора
     if score > SCORE_DIRECT_ANSWER and answer:
         final_answer = answer
     elif score > SCORE_CLARIFY and candidates:
-        # Предлагаем уточнить
         keyboard = [[InlineKeyboardButton(f"💬 {c['topic']}", callback_data=f"clarify_{c['index']}")]
                     for c in candidates]
         keyboard.append([InlineKeyboardButton("❌ Не то", callback_data="clarify_none")])
@@ -692,7 +671,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
     elif FUZZY_ENABLED:
-        # Попытка исправить опечатку
         suggestion = get_fuzzy_suggestion(user_question)
         if suggestion:
             answer2, score2, _ = search_knowledge_base(suggestion, kb_index)
@@ -708,7 +686,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
 
     if not final_answer:
-        # Сохраняем неизвестный вопрос
         unk = load_json(UNKNOWN_FILE)
         unk.append({
             "question": user_question,
@@ -724,11 +701,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # Формируем ответ
     clean_answer = final_answer.replace("[add_button]", "").strip()
     display_text, url_buttons = extract_links_and_buttons(clean_answer)
 
-    # Определяем индекс ответа
     ans_idx = candidates[0]['index'] if candidates and candidates[0]['context'] == final_answer else 0
     if ans_idx == 0:
         for i, item in enumerate(kb_index.items):
@@ -751,19 +726,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
-# ====================== Нечёткий поиск (опционально) ======================
-
-def get_fuzzy_suggestion(question: str) -> Optional[str]:
-    if not FUZZY_ENABLED or not kb_index or not kb_index.all_keywords_list:
-        return None
-    best_match, score = process.extractOne(question, kb_index.all_keywords_list)
-    if score > 70:
-        return best_match
-    return None
-
-
-# ====================== Текстовые админ-команды ======================
-
 async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
     text = update.message.text.strip().lower()
@@ -776,7 +738,6 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
 
     if text in ["отзыв", "отзывы", "лайки", "дизлайки", "статистика"]:
-        # Показываем меню админки
         keyboard = [
             [
                 InlineKeyboardButton("👍 Лайки", callback_data="admin_page_like_0"),
@@ -796,7 +757,6 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
 
     if text == "стата":
-        # Быстрая статистика
         users = len(user_contexts)
         cons = len(load_json(CONSULTATIONS_FILE))
         unk = len(load_json(UNKNOWN_FILE))
@@ -809,3 +769,31 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
 
     return False
+
+
+# ====================== Обработчик ошибок ======================
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
+    if update and hasattr(update, 'effective_message') and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Что-то пошло не так.\n\nПопробуйте позже или напишите /start",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    if ADMIN_USER_ID:
+        try:
+            import traceback
+            tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+            tb_string = "".join(tb_list)
+            await context.bot.send_message(
+                ADMIN_USER_ID,
+                f"❌ <b>ERROR:</b>\n<pre>{tb_string[:4000]}</pre>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass

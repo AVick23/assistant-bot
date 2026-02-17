@@ -1,11 +1,8 @@
-import os
-import traceback
-
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
-from config import BOT_TOKEN, ADMIN_USER_ID, logger
-from utils import preprocess_knowledge_base, load_knowledge_base, kb_index as kb_global
+from config import BOT_TOKEN, logger
+from utils import init_knowledge_base
 from handlers import (
     start, help_command, roadmaps_command, faq_command, favorites_command,
     menu_callback, handle_message, error_handler
@@ -13,20 +10,17 @@ from handlers import (
 
 
 def main() -> None:
-    # Загружаем базу знаний
+    # Инициализация базы знаний
     try:
-        kb_raw = load_knowledge_base('main.json')
-        global kb_global
-        kb_global = preprocess_knowledge_base(kb_raw)
-        print(f"✅ База знаний загружена: {len(kb_global.items)} записей")
+        init_knowledge_base('main.json')
     except Exception as e:
-        print(f"❌ Ошибка загрузки базы знаний: {e}")
+        logger.error(f"❌ Ошибка загрузки базы знаний: {e}")
         return
 
-    # Создаём приложение
+    # Создание приложения
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Регистрируем хендлеры
+    # Регистрация хендлеров
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("roadmaps", roadmaps_command))
@@ -35,10 +29,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(menu_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Обработчик ошибок
     application.add_error_handler(error_handler)
 
-    print("🚀 Бот запущен")
+    logger.info("🚀 Бот запущен")
     application.run_polling()
 
 
